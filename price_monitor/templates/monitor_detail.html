@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ mon.name or mon.id[:8] }} - Price Monitor</title>
+<style>
+:root,[data-theme="light"]{--primary:#4f46e5;--primary-hover:#4338ca;--bg:#f1f5f9;--card:#fff;--text:#1e293b;--muted:#64748b;--border:#e2e8f0;--success:#16a34a;--danger:#dc2626;--warn:#d97706;--radius:10px;--log-bg:#1e293b;--log-fg:#cbd5e1;}
+[data-theme="dark"]{--bg:#0f172a;--card:#1e293b;--text:#e2e8f0;--muted:#94a3b8;--border:#334155;--log-bg:#0f172a;--log-fg:#94a3b8;}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);line-height:1.6;}
+.top-bar{background:var(--card);border-bottom:1px solid var(--border);padding:.7rem 1.5rem;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem;}
+.top-bar a{color:var(--primary);text-decoration:none;font-size:.88rem;font-weight:500;}
+main{max-width:900px;margin:0 auto;padding:1rem;}
+.card{background:var(--card);border-radius:var(--radius);border:1px solid var(--border);padding:1.25rem;margin-bottom:1rem;}
+.card h2{font-size:1.05rem;font-weight:600;margin-bottom:.85rem;}
+.btn{display:inline-flex;align-items:center;gap:.3rem;padding:.4rem .85rem;border-radius:6px;font-size:.8rem;font-weight:500;border:none;cursor:pointer;transition:.15s;text-decoration:none;}
+.bp{background:var(--primary);color:#fff;}.bp:hover{background:var(--primary-hover);}
+.bs{background:var(--success);color:#fff;}.bs:hover{background:#15803d;}
+.bd{background:var(--danger);color:#fff;}.bd:hover{background:#b91c1c;}
+.bo{background:transparent;border:1px solid var(--border);color:var(--text);}.bo:hover{background:var(--bg);}
+.bw{background:var(--warn);color:#fff;}.bw:hover{background:#b45309;}
+.br{display:flex;flex-wrap:wrap;gap:.5rem;margin-top:.85rem;}
+.fg{margin-bottom:.7rem;}
+.fg label{display:block;font-size:.82rem;font-weight:500;margin-bottom:.2rem;}
+input[type=text],input[type=number],input[type=url],select{width:100%;padding:.45rem .65rem;border:1px solid var(--border);border-radius:6px;font-size:.86rem;outline:none;background:var(--card);color:var(--text);}
+input:focus,select:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(79,70,229,.12);}
+.sg{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:.6rem;margin-bottom:.85rem;}
+.si{padding:.65rem;background:var(--bg);border-radius:6px;}
+.si .sl{font-size:.7rem;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);}
+.si .sv{font-size:1.05rem;font-weight:600;margin-top:.15rem;}
+.badge{display:inline-block;padding:.15rem .55rem;border-radius:999px;font-size:.7rem;font-weight:600;}
+.b-active{background:#dcfce7;color:#166534;}.b-paused{background:#fef3c7;color:#92400e;}.b-completed{background:#dbeafe;color:#1e40af;}.b-expired{background:#f1f5f9;color:var(--muted);}
+.chart-wrap{width:100%;height:200px;position:relative;margin-bottom:1rem;}
+canvas{width:100%!important;height:100%!important;}
+.log{background:var(--log-bg);color:var(--log-fg);padding:.7rem;border-radius:6px;font-family:Consolas,Monaco,monospace;font-size:.76rem;max-height:400px;overflow-y:auto;white-space:pre-wrap;word-break:break-word;}
+.toast{position:fixed;bottom:1.2rem;right:1.2rem;padding:.6rem 1rem;border-radius:8px;color:#fff;font-size:.82rem;font-weight:500;transform:translateY(80px);opacity:0;transition:.25s;z-index:999;max-width:340px;}
+.toast.show{transform:translateY(0);opacity:1;}.toast-ok{background:var(--success);}.toast-err{background:var(--danger);}
+details summary{cursor:pointer;font-weight:600;font-size:.92rem;list-style:none;}
+details summary::-webkit-details-marker{display:none;}
+details summary::before{content:'\25B6\FE0E ';font-size:.7rem;display:inline-block;transition:transform .2s;margin-right:.4rem;}
+details[open] summary::before{transform:rotate(90deg);}
+details .inner{margin-top:.85rem;}
+@media(max-width:600px){.sg{grid-template-columns:1fr 1fr;}}
+</style>
+</head>
+<body>
+<div class="top-bar">
+  <a href="/">&larr; All Monitors</a>
+  <span class="badge b-{{ mon.status }}">{{ mon.status }}</span>
+</div>
+
+<main>
+<!-- Header -->
+<div class="card">
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:.5rem">
+    <div>
+      <h2 style="margin:0">{{ mon.get('name','') or mon.id[:8] }}</h2>
+      <p style="font-size:.78rem;color:var(--muted)">{{ mon.type|upper }} &middot; Created {{ mon.get('created_at','')[:10] or '—' }} &middot; By {{ mon.get('created_by','admin') }}{% if mon.get('category') %} &middot; {{ mon.category }}{% endif %}</p>
+    </div>
+    <div class="br" style="margin:0">
+      <button class="btn bo" id="btn-check" onclick="doCheck()">Check now</button>
+      {% if mon.status == 'active' %}
+        <button class="btn bw" onclick="doAction('pause')">Pause</button>
+      {% elif mon.status == 'paused' %}
+        <button class="btn bs" onclick="doAction('resume')">Resume</button>
+      {% endif %}
+      <a href="/api/monitors/{{ mon.id }}/export" class="btn bo">Export CSV</a>
+      <button class="btn bd" onclick="doDelete()">Delete</button>
+    </div>
+  </div>
+</div>
+
+<!-- Status -->
+<div class="card">
+  <h2>Current Status</h2>
+  <div class="sg">
+    {% set lp = mon.get('last_price') %}
+    {% set bg = mon.get('budget') %}
+    {% set lf = mon.get('last_fare') %}
+    {% set la = mon.get('last_availability','') %}
+    {% set lc = mon.get('last_checked_at','') %}
+    {% if mon.type == 'product' %}
+    <div class="si"><div class="sl">Last Price</div><div class="sv" id="v-price">{{ '{:g}'.format(lp) if lp is not none else '—' }}</div></div>
+    <div class="si"><div class="sl">Budget</div><div class="sv">{{ '{:g}'.format(bg) if bg is not none else '—' }}</div></div>
+    <div class="si"><div class="sl">Verdict</div><div class="sv" id="v-verdict">
+      {% if lp is not none and bg is not none %}
+        {% if lp <= bg %}<span style="color:var(--success)">At/below budget</span>{% else %}<span style="color:var(--warn)">Above budget</span>{% endif %}
+      {% else %}—{% endif %}
+    </div></div>
+    {% else %}
+    <div class="si"><div class="sl">{{ mon.get('class_code','SL') }} Fare</div><div class="sv" id="v-fare">{{ '{:g}'.format(lf) if lf is not none else '—' }}</div></div>
+    <div class="si"><div class="sl">Availability</div><div class="sv" id="v-avail">{{ la or '—' }}</div></div>
+    <div class="si"><div class="sl">Route</div><div class="sv" style="font-size:.85rem">{{ mon.get('from_station','') }} &rarr; {{ mon.get('to_station','') }}</div></div>
+    <div class="si"><div class="sl">Date</div><div class="sv" style="font-size:.85rem">{{ mon.get('travel_date','—') }}</div></div>
+    {% endif %}
+    <div class="si"><div class="sl">Last Check</div><div class="sv" id="v-time" style="font-size:.82rem">{{ lc[:19] if lc else '—' }}</div></div>
+    <div class="si"><div class="sl">Interval</div><div class="sv" style="font-size:.85rem">{{ mon.get('check_interval_min',60) }} min</div></div>
+  </div>
+</div>
+
+<!-- Price History Chart -->
+{% if price_history %}
+<div class="card">
+  <h2>{{ 'Price' if mon.type == 'product' else 'Fare' }} History</h2>
+  <div class="chart-wrap"><canvas id="chart"></canvas></div>
+</div>
+{% endif %}
+
+<!-- Edit -->
+<div class="card">
+  <details>
+    <summary>Edit Monitor</summary>
+    <div class="inner">
+      <div class="fg"><label>Name</label><input type="text" id="e-name" value="{{ mon.get('name','') }}"></div>
+      <div class="fg"><label>Category</label><input type="text" id="e-category" value="{{ mon.get('category','') }}"></div>
+      <div class="fg"><label>Check interval (min)</label><input type="number" id="e-interval" value="{{ mon.get('check_interval_min',60) }}" min="1" max="1440"></div>
+      {% if mon.type == 'product' %}
+      <div class="fg"><label>URL</label><input type="url" id="e-url" value="{{ mon.get('url','') }}"></div>
+      <div class="fg"><label>Budget</label><input type="text" id="e-budget" value="{{ '{:g}'.format(bg) if bg is not none else '' }}"></div>
+      <div class="fg"><label>CSS selector</label><input type="text" id="e-selector" value="{{ mon.get('price_selector','') }}"></div>
+      <div class="fg"><label>Monitor until</label><input type="text" id="e-until" value="{{ mon.get('monitor_until','') }}"></div>
+      {% else %}
+      {% set fb = mon.get('fare_budget') %}
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem">
+        <div class="fg"><label>Train number</label><input type="text" id="e-tnum" value="{{ mon.get('train_number','') }}"></div>
+        <div class="fg"><label>Train name</label><input type="text" id="e-tname" value="{{ mon.get('train_name','') }}"></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem">
+        <div class="fg"><label>From</label><input type="text" id="e-from" value="{{ mon.get('from_station','') }}"></div>
+        <div class="fg"><label>To</label><input type="text" id="e-to" value="{{ mon.get('to_station','') }}"></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:.5rem">
+        <div class="fg"><label>Date</label><input type="text" id="e-date" value="{{ mon.get('travel_date','') }}"></div>
+        <div class="fg"><label>Class</label><input type="text" id="e-class" value="{{ mon.get('class_code','SL') }}"></div>
+        <div class="fg"><label>Quota</label><input type="text" id="e-quota" value="{{ mon.get('quota','GN') }}"></div>
+      </div>
+      <div class="fg"><label>Fare budget</label><input type="text" id="e-fbudget" value="{{ '{:g}'.format(fb) if fb is not none else '' }}"></div>
+      {% endif %}
+      <div class="br"><button class="btn bp" onclick="saveEdit()">Save changes</button></div>
+    </div>
+  </details>
+</div>
+
+<!-- Event History -->
+<div class="card">
+  <h2>Event History</h2>
+  <div class="log" id="events">{% for e in events %}[{{ e.created_at[:19] }}] {{ e.event_type }}: {{ e.details|tojson }}
+{% endfor %}{% if not events %}No events yet.{% endif %}</div>
+</div>
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const MID='{{ mon.id }}';
+const MTYPE='{{ mon.type }}';
+const $=id=>document.getElementById(id);
+function toast(m,ok=true){const t=$('toast');t.textContent=m;t.className='toast '+(ok?'toast-ok':'toast-err')+' show';clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),3500);}
+
+(function(){const t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t);})();
+
+async function doCheck(){
+  const b=$('btn-check');b.disabled=true;b.textContent='Checking...';
+  try{const r=await(await fetch('/api/monitors/'+MID+'/check',{method:'POST'})).json();
+    if(r.ok){toast('Check complete');location.reload();}else toast(r.error||'Failed',false);
+  }catch(e){toast('Error',false);}
+  b.disabled=false;b.textContent='Check now';
+}
+
+async function doAction(act){
+  await fetch('/api/monitors/'+MID+'/'+act,{method:'POST'});
+  toast(act==='pause'?'Paused':'Resumed');
+  location.reload();
+}
+
+async function doDelete(){
+  if(!confirm('Delete this monitor permanently?'))return;
+  await fetch('/api/monitors/'+MID,{method:'DELETE'});
+  toast('Deleted');
+  window.location='/';
+}
+
+async function saveEdit(){
+  const d={name:$('e-name').value,category:$('e-category').value,check_interval_min:parseInt($('e-interval').value)||60};
+  if(MTYPE==='product'){Object.assign(d,{url:$('e-url').value,budget:parseFloat($('e-budget').value)||0,price_selector:$('e-selector').value,monitor_until:$('e-until').value});}
+  else{Object.assign(d,{train_number:$('e-tnum').value,train_name:$('e-tname').value,from_station:$('e-from').value,to_station:$('e-to').value,travel_date:$('e-date').value,class_code:$('e-class').value,quota:$('e-quota').value,fare_budget:parseFloat($('e-fbudget').value)||null});}
+  const r=await(await fetch('/api/monitors/'+MID,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)})).json();
+  r.ok?toast('Saved'):toast(r.error||'Failed',false);
+}
+
+/* Chart */
+{% if price_history %}
+const DATA={{ price_history|tojson }};
+(function(){
+  const c=$('chart');if(!c||!DATA.length)return;
+  const ctx=c.getContext('2d');
+  const W=c.parentElement.clientWidth, H=200;
+  c.width=W*2;c.height=H*2;
+  ctx.scale(2,2);
+  const vals=DATA.map(d=>d.v).filter(v=>v!=null);
+  if(!vals.length)return;
+  const mn=Math.min(...vals),mx=Math.max(...vals);
+  const pad={l:55,r:15,t:15,b:30};
+  const gw=W-pad.l-pad.r, gh=H-pad.t-pad.b;
+  const range=mx-mn||1;
+  function x(i){return pad.l+i/(DATA.length-1||1)*gw;}
+  function y(v){return pad.t+gh-(v-mn)/range*gh;}
+
+  ctx.strokeStyle='var(--border)';ctx.lineWidth=.5;
+  for(let i=0;i<5;i++){const yy=pad.t+gh*i/4;ctx.beginPath();ctx.moveTo(pad.l,yy);ctx.lineTo(pad.l+gw,yy);ctx.stroke();ctx.fillStyle='var(--muted)';ctx.font='10px sans-serif';ctx.textAlign='right';ctx.fillText((mx-range*i/4).toFixed(0),pad.l-5,yy+3);}
+
+  ctx.beginPath();ctx.strokeStyle='#4f46e5';ctx.lineWidth=2;
+  let first=true;
+  DATA.forEach((d,i)=>{if(d.v==null)return;const px=x(i),py=y(d.v);first?(ctx.moveTo(px,py),first=false):ctx.lineTo(px,py);});
+  ctx.stroke();
+
+  ctx.fillStyle='var(--muted)';ctx.font='10px sans-serif';ctx.textAlign='center';
+  const step=Math.max(1,Math.floor(DATA.length/5));
+  DATA.forEach((d,i)=>{if(i%step===0||i===DATA.length-1){const label=d.t?d.t.substring(5,10):'';ctx.fillText(label,x(i),H-5);}});
+})();
+{% endif %}
+</script>
+</body>
+</html>

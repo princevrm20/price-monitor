@@ -14,32 +14,20 @@ services:
         value: /tmp/pm_data
       - key: PRICE_MONITOR_AUTO_START
         value: "1"
-      - key: PRICE_MONITOR_CHECK_INTERVAL
-        value: "60"
-      # ── Set these in the Render dashboard after first deploy ──
-      # Product to track:
-      - key: PRICE_MONITOR_PRODUCT_NAME
+      # Admin auth:
+      - key: ADMIN_PASSWORD
         sync: false
-      - key: PRICE_MONITOR_PRODUCT_URL
+      - key: SECRET_KEY
+        generateValue: true
+      # Supabase (persistent database):
+      - key: SUPABASE_URL
         sync: false
-      - key: PRICE_MONITOR_PRODUCT_BUDGET
+      - key: SUPABASE_KEY
         sync: false
-      - key: PRICE_MONITOR_PRODUCT_SELECTOR
-        sync: false
-      # Train tracking (Indian Rail API):
+      # Train tracking:
       - key: INDIAN_RAIL_API_KEY
         sync: false
-      - key: PRICE_MONITOR_TRAIN_NUMBER
-        sync: false
-      - key: PRICE_MONITOR_TRAIN_FROM
-        sync: false
-      - key: PRICE_MONITOR_TRAIN_TO
-        sync: false
-      - key: PRICE_MONITOR_TRAIN_DATE
-        sync: false
-      - key: PRICE_MONITOR_TRAIN_CLASS
-        sync: false
-      # Notifications (at least one channel):
+      # Notifications:
       - key: PRICE_MONITOR_NTFY_TOPIC
         sync: false
       - key: PRICE_MONITOR_TELEGRAM_BOT_TOKEN

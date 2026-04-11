@@ -5,4 +5,6 @@ plyer==2.1.0
 flask>=3.0
 gunicorn>=22.0
 certifi
+supabase>=2.0
+python-dotenv>=1.0
 pytest==8.3.4

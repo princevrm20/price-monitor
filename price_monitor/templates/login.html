@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Login - Price Monitor</title>
+<style>
+:root { --primary:#4f46e5; --bg:#f1f5f9; --card:#fff; --text:#1e293b; --border:#e2e8f0; --danger:#dc2626; --radius:10px; }
+*,*::before,*::after { box-sizing:border-box; margin:0; padding:0; }
+body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; background:var(--bg); color:var(--text); min-height:100vh; display:flex; align-items:center; justify-content:center; }
+.wrap { background:var(--card); border-radius:var(--radius); border:1px solid var(--border); padding:2rem; width:100%; max-width:380px; text-align:center; }
+h1 { font-size:1.4rem; margin-bottom:.3rem; }
+p { font-size:.84rem; color:#64748b; margin-bottom:1.5rem; }
+input { width:100%; padding:.6rem .8rem; border:1px solid var(--border); border-radius:6px; font-size:.95rem; margin-bottom:1rem; outline:none; }
+input:focus { border-color:var(--primary); box-shadow:0 0 0 3px rgba(79,70,229,.12); }
+button { width:100%; padding:.6rem; background:var(--primary); color:#fff; border:none; border-radius:6px; font-size:.95rem; font-weight:500; cursor:pointer; }
+button:hover { background:#4338ca; }
+.err { background:#fef2f2; color:var(--danger); padding:.5rem; border-radius:6px; font-size:.84rem; margin-bottom:1rem; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Price Monitor</h1>
+  <p>Admin login required</p>
+  {% if error %}<div class="err">{{ error }}</div>{% endif %}
+  <form method="POST">
+    <input type="password" name="password" placeholder="Admin password" autofocus required>
+    <button type="submit">Log in</button>
+  </form>
+</div>
+</body>
+</html>
