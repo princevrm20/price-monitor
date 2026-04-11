@@ -16,7 +16,11 @@ from price_monitor.notify_settings import (
     read_notify_config_file,
     write_notify_config_file,
 )
-from price_monitor.storage import TrackedItem, default_data_path, load_items, save_items
+from price_monitor.storage import (
+    TrackedItem, TrackedTrain, default_data_path,
+    load_items, save_items, load_trains, save_trains,
+)
+from price_monitor.train_checker import check_train
 
 app = Flask(__name__)
 
@@ -51,10 +55,13 @@ def index():
     dp = _data_path()
     items = load_items(dp)
     item = items[0] if items else None
+    trains = load_trains(dp)
+    train = trains[0] if trains else None
     notify = read_notify_config_file(dp)
     return render_template(
         "index.html",
         item=item,
+        train=train,
         monitoring=_monitor_running,
         interval=_monitor_interval_min,
         notify=notify,
@@ -117,6 +124,84 @@ def check_now():
 
 
 # ---------------------------------------------------------------------------
+# Train API
+# ---------------------------------------------------------------------------
+
+@app.route("/api/train", methods=["POST"])
+def save_train():
+    dp = _data_path()
+    data = request.get_json(force=True)
+    train_number = (data.get("train_number") or "").strip()
+    from_st = (data.get("from_station") or "").strip().upper()
+    to_st = (data.get("to_station") or "").strip().upper()
+    travel_date = (data.get("travel_date") or "").strip()
+    class_code = (data.get("class_code") or "SL").strip().upper()
+    quota = (data.get("quota") or "GN").strip().upper()
+    fare_budget_raw = str(data.get("fare_budget", "") or "").strip()
+    notify_avail = bool(data.get("notify_on_available", True))
+
+    if not train_number or not from_st or not to_st or not travel_date:
+        return jsonify(ok=False, error="Train number, stations, and date are required"), 400
+
+    fare_budget = None
+    if fare_budget_raw:
+        try:
+            fare_budget = float(fare_budget_raw.replace(",", "."))
+        except ValueError:
+            return jsonify(ok=False, error="Fare budget must be a number"), 400
+
+    existing = load_trains(dp)
+    train_id = existing[0].id if existing else str(uuid.uuid4())
+    train = TrackedTrain(
+        id=train_id,
+        train_number=train_number,
+        train_name=data.get("train_name", "").strip(),
+        from_station=from_st,
+        to_station=to_st,
+        travel_date=travel_date,
+        class_code=class_code,
+        quota=quota,
+        fare_budget=fare_budget,
+        notify_on_available=notify_avail,
+    )
+    save_trains([train], dp)
+    _add_log(f"Train saved: {train_number} {from_st}\u2192{to_st}")
+    return jsonify(ok=True, train=train.to_json())
+
+
+@app.route("/api/train/check", methods=["POST"])
+def check_train_now():
+    dp = _data_path()
+    trains = load_trains(dp)
+    if not trains:
+        return jsonify(ok=False, error="No train saved yet"), 400
+    _add_log("Train check started\u2026")
+    try:
+        from price_monitor.notify_settings import load_notify_settings
+        settings = load_notify_settings(dp)
+        t = check_train(trains[0], settings)
+        save_trains([t], dp)
+        parts = []
+        if t.last_fare is not None:
+            parts.append(f"fare {t.last_fare:g}")
+        if t.last_availability:
+            parts.append(t.last_availability)
+        _add_log(f"Train check done: {', '.join(parts) if parts else 'no data'}")
+        return jsonify(ok=True, train=t.to_json())
+    except Exception as e:
+        _add_log(f"Train check failed: {e}")
+        return jsonify(ok=False, error=str(e)), 500
+
+
+@app.route("/api/train/status")
+def train_status():
+    dp = _data_path()
+    trains = load_trains(dp)
+    train = trains[0] if trains else None
+    return jsonify(train=train.to_json() if train else None)
+
+
+# ---------------------------------------------------------------------------
 # Background monitor
 # ---------------------------------------------------------------------------
 
@@ -125,22 +210,38 @@ def _monitor_loop() -> None:
     dp = _data_path()
     while _monitor_running:
         items = load_items(dp)
-        if not items:
-            _add_log("No product to monitor")
-            if _stop_event.wait(timeout=60):
-                break
-            continue
-        try:
-            fresh = check_all(items, items_path=dp)
-            save_items(fresh, dp)
-            it = fresh[0]
-            if it.last_price is not None:
-                rel = "at/below budget" if it.last_price <= it.budget else "above budget"
-                _add_log(f"Scheduled check: {it.last_price:g} ({rel})")
-            else:
-                _add_log("Scheduled check: could not read price")
-        except Exception as e:  # noqa: BLE001
-            _add_log(f"Check error: {e}")
+        if items:
+            try:
+                fresh = check_all(items, items_path=dp)
+                save_items(fresh, dp)
+                it = fresh[0]
+                if it.last_price is not None:
+                    rel = "at/below budget" if it.last_price <= it.budget else "above budget"
+                    _add_log(f"Product check: {it.last_price:g} ({rel})")
+                else:
+                    _add_log("Product check: could not read price")
+            except Exception as e:  # noqa: BLE001
+                _add_log(f"Product check error: {e}")
+
+        trains = load_trains(dp)
+        if trains:
+            try:
+                from price_monitor.notify_settings import load_notify_settings
+                settings = load_notify_settings(dp)
+                t = check_train(trains[0], settings)
+                save_trains([t], dp)
+                parts = []
+                if t.last_fare is not None:
+                    parts.append(f"fare {t.last_fare:g}")
+                if t.last_availability:
+                    parts.append(t.last_availability)
+                _add_log(f"Train check: {', '.join(parts) if parts else 'no data'}")
+            except Exception as e:  # noqa: BLE001
+                _add_log(f"Train check error: {e}")
+
+        if not items and not trains:
+            _add_log("Nothing to monitor")
+
         if _stop_event.wait(timeout=_monitor_interval_min * 60):
             break
     _monitor_running = False
@@ -158,12 +259,19 @@ def start_monitor():
         if _monitor_running:
             return jsonify(ok=True, monitoring=True, interval=_monitor_interval_min)
         items = load_items(dp)
-        if not items:
-            return jsonify(ok=False, error="Save a product first"), 400
-        it = items[0]
-        it.notified_at_budget = False
-        it.last_notify_delivered = None
-        save_items([it], dp)
+        trains = load_trains(dp)
+        if not items and not trains:
+            return jsonify(ok=False, error="Save a product or train first"), 400
+        if items:
+            it = items[0]
+            it.notified_at_budget = False
+            it.last_notify_delivered = None
+            save_items([it], dp)
+        if trains:
+            tr = trains[0]
+            tr.notified_fare = False
+            tr.notified_available = False
+            save_trains([tr], dp)
 
         _stop_event.clear()
         _monitor_running = True
@@ -193,8 +301,11 @@ def get_status():
     dp = _data_path()
     items = load_items(dp)
     item = items[0] if items else None
+    trains = load_trains(dp)
+    train = trains[0] if trains else None
     return jsonify(
         item=item.to_json() if item else None,
+        train=train.to_json() if train else None,
         monitoring=_monitor_running,
         interval=_monitor_interval_min,
         logs=list(_log),
@@ -282,12 +393,38 @@ def _bootstrap() -> None:
         save_items([item], dp)
         _add_log(f"Product loaded from env: {item.name}")
 
+    train_num = os.environ.get("PRICE_MONITOR_TRAIN_NUMBER", "").strip()
+    train_from = os.environ.get("PRICE_MONITOR_TRAIN_FROM", "").strip().upper()
+    train_to = os.environ.get("PRICE_MONITOR_TRAIN_TO", "").strip().upper()
+    train_date = os.environ.get("PRICE_MONITOR_TRAIN_DATE", "").strip()
+
+    if train_num and train_from and train_to and train_date:
+        train_class = os.environ.get("PRICE_MONITOR_TRAIN_CLASS", "SL").strip().upper()
+        train_budget_raw = os.environ.get("PRICE_MONITOR_TRAIN_BUDGET", "").strip()
+        train_budget = None
+        if train_budget_raw:
+            try:
+                train_budget = float(train_budget_raw)
+            except ValueError:
+                pass
+        existing_trains = load_trains(dp)
+        t_id = existing_trains[0].id if existing_trains else str(uuid.uuid4())
+        train = TrackedTrain(
+            id=t_id, train_number=train_num,
+            train_name="", from_station=train_from, to_station=train_to,
+            travel_date=train_date, class_code=train_class, quota="GN",
+            fare_budget=train_budget, notify_on_available=True,
+        )
+        save_trains([train], dp)
+        _add_log(f"Train loaded from env: {train_num} {train_from}\u2192{train_to}")
+
     auto = os.environ.get("PRICE_MONITOR_AUTO_START", "").strip().lower()
     if auto not in ("1", "true", "yes"):
         return
 
     items = load_items(dp)
-    if not items:
+    trains = load_trains(dp)
+    if not items and not trains:
         return
 
     interval_raw = os.environ.get("PRICE_MONITOR_CHECK_INTERVAL", "60").strip()

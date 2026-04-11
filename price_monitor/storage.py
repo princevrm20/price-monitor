@@ -79,3 +79,73 @@ def new_item(
         price_selector=price_selector,
         monitor_until_iso=monitor_until_iso,
     )
+
+
+# ---------------------------------------------------------------------------
+# Train tracking
+# ---------------------------------------------------------------------------
+
+@dataclass
+class TrackedTrain:
+    id: str
+    train_number: str
+    train_name: str
+    from_station: str
+    to_station: str
+    travel_date: str
+    class_code: str
+    quota: str
+    fare_budget: float | None = None
+    notify_on_available: bool = True
+    last_fare: float | None = None
+    last_availability: str | None = None
+    last_checked_iso: str | None = None
+    notified_fare: bool = False
+    notified_available: bool = False
+
+    def to_json(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @staticmethod
+    def from_json(data: dict[str, Any]) -> TrackedTrain:
+        fb = data.get("fare_budget")
+        return TrackedTrain(
+            id=data["id"],
+            train_number=data["train_number"],
+            train_name=data.get("train_name", ""),
+            from_station=data["from_station"],
+            to_station=data["to_station"],
+            travel_date=data["travel_date"],
+            class_code=data.get("class_code", "SL"),
+            quota=data.get("quota", "GN"),
+            fare_budget=float(fb) if fb is not None else None,
+            notify_on_available=bool(data.get("notify_on_available", True)),
+            last_fare=float(data["last_fare"]) if data.get("last_fare") is not None else None,
+            last_availability=data.get("last_availability"),
+            last_checked_iso=data.get("last_checked_iso"),
+            notified_fare=bool(data.get("notified_fare", False)),
+            notified_available=bool(data.get("notified_available", False)),
+        )
+
+
+def default_trains_path() -> Path:
+    return Path(__file__).resolve().parent.parent / "data" / "trains.json"
+
+
+def trains_path_for_items(items_path: Path) -> Path:
+    return items_path.parent / "trains.json"
+
+
+def load_trains(items_path: Path | None = None) -> list[TrackedTrain]:
+    p = trains_path_for_items(items_path) if items_path else default_trains_path()
+    if not p.exists():
+        return []
+    raw = json.loads(p.read_text(encoding="utf-8"))
+    return [TrackedTrain.from_json(x) for x in raw]
+
+
+def save_trains(trains: list[TrackedTrain], items_path: Path | None = None) -> None:
+    p = trains_path_for_items(items_path) if items_path else default_trains_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    payload = [t.to_json() for t in trains]
+    p.write_text(json.dumps(payload, indent=2), encoding="utf-8")

@@ -88,7 +88,7 @@
 
 <header>
   <h1>Price Monitor</h1>
-  <p>Track product prices 24/7 &mdash; get notified on any device when they drop</p>
+  <p>Track product prices &amp; train fares 24/7 &mdash; get notified on any device</p>
 </header>
 
 <main>
@@ -166,6 +166,116 @@
       <button class="btn bd" id="btn-stop"  onclick="stopMon()"  {% if not monitoring %}style="display:none"{% endif %}>Stop monitoring</button>
       <button class="btn bo" id="btn-check" onclick="checkNow()">Check price now</button>
     </div>
+  </div>
+
+  <!-- ─── Train ─── -->
+  <div class="card">
+    <details {% if train %}open{% endif %}>
+      <summary>Track a Train (Fare + Seat Availability)</summary>
+      <div class="inner">
+        <p class="hint" style="margin-bottom:.85rem">
+          Monitor Indian Railways train fares and seat availability via Indian Rail API.
+          Requires an API key &mdash; set <code>INDIAN_RAIL_API_KEY</code> in Render environment variables.
+          Use station codes (e.g. NDLS, CNB) and date in DD-MM-YYYY format.
+        </p>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem">
+          <div class="fg">
+            <label>Train number <span class="req">*</span></label>
+            <input type="text" id="t-num" value="{{ train.train_number if train else '' }}" placeholder="e.g. 12565">
+          </div>
+          <div class="fg">
+            <label>Train name <span style="color:var(--muted);font-weight:400">(optional)</span></label>
+            <input type="text" id="t-name" value="{{ train.train_name if train else '' }}">
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem">
+          <div class="fg">
+            <label>From station code <span class="req">*</span></label>
+            <input type="text" id="t-from" value="{{ train.from_station if train else '' }}" placeholder="e.g. NDLS">
+          </div>
+          <div class="fg">
+            <label>To station code <span class="req">*</span></label>
+            <input type="text" id="t-to" value="{{ train.to_station if train else '' }}" placeholder="e.g. CNB">
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:.5rem">
+          <div class="fg">
+            <label>Travel date <span class="req">*</span></label>
+            <input type="text" id="t-date" value="{{ train.travel_date if train else '' }}" placeholder="DD-MM-YYYY">
+          </div>
+          <div class="fg">
+            <label>Class</label>
+            <select id="t-class" style="width:100%;padding:.48rem .7rem;border:1px solid var(--border);border-radius:6px;font-size:.88rem;background:var(--card)">
+              {% set tc = train.class_code if train else 'SL' %}
+              <option value="1A" {{ 'selected' if tc=='1A' else '' }}>AC First (1A)</option>
+              <option value="2A" {{ 'selected' if tc=='2A' else '' }}>AC 2-Tier (2A)</option>
+              <option value="3A" {{ 'selected' if tc=='3A' else '' }}>AC 3-Tier (3A)</option>
+              <option value="SL" {{ 'selected' if tc=='SL' else '' }}>Sleeper (SL)</option>
+              <option value="CC" {{ 'selected' if tc=='CC' else '' }}>Chair Car (CC)</option>
+              <option value="2S" {{ 'selected' if tc=='2S' else '' }}>Second Sitting (2S)</option>
+              <option value="GN" {{ 'selected' if tc=='GN' else '' }}>General (GN)</option>
+            </select>
+          </div>
+          <div class="fg">
+            <label>Quota</label>
+            <select id="t-quota" style="width:100%;padding:.48rem .7rem;border:1px solid var(--border);border-radius:6px;font-size:.88rem;background:var(--card)">
+              {% set tq = train.quota if train else 'GN' %}
+              <option value="GN" {{ 'selected' if tq=='GN' else '' }}>General (GN)</option>
+              <option value="TQ" {{ 'selected' if tq=='TQ' else '' }}>Tatkal (TQ)</option>
+              <option value="CK" {{ 'selected' if tq=='CK' else '' }}>Tatkal CK</option>
+            </select>
+          </div>
+        </div>
+        <div class="fg">
+          <label>Fare budget <span style="color:var(--muted);font-weight:400">(optional &mdash; alert when fare &le; this)</span></label>
+          <input type="text" id="t-budget" value="{{ '{:g}'.format(train.fare_budget) if train and train.fare_budget is not none else '' }}">
+        </div>
+        <div class="br">
+          <button class="btn bp" onclick="saveTrain()">Save train</button>
+          <button class="btn bo" id="btn-tchk" onclick="checkTrain()">Check now</button>
+        </div>
+
+        {% if train and (train.last_fare is not none or train.last_availability) %}
+        <div class="sg" style="margin-top:.85rem">
+          <div class="si">
+            <div class="sl">{{ train.class_code }} Fare</div>
+            <div class="sv" id="t-fare">{{ '{:g}'.format(train.last_fare) if train.last_fare is not none else '\u2014' }}</div>
+          </div>
+          <div class="si">
+            <div class="sl">Seat Availability</div>
+            <div class="sv" id="t-avail">{{ train.last_availability or '\u2014' }}</div>
+          </div>
+          <div class="si">
+            <div class="sl">Last Check</div>
+            <div class="sv" id="t-time" style="font-size:.82rem">{{ train.last_checked_iso or '\u2014' }}</div>
+          </div>
+          <div class="si">
+            <div class="sl">Route</div>
+            <div class="sv" id="t-route" style="font-size:.82rem">{{ train.from_station }} &rarr; {{ train.to_station }}</div>
+          </div>
+        </div>
+        {% else %}
+        <div class="sg" style="margin-top:.85rem">
+          <div class="si">
+            <div class="sl">Fare</div>
+            <div class="sv" id="t-fare">&mdash;</div>
+          </div>
+          <div class="si">
+            <div class="sl">Seat Availability</div>
+            <div class="sv" id="t-avail">&mdash;</div>
+          </div>
+          <div class="si">
+            <div class="sl">Last Check</div>
+            <div class="sv" id="t-time" style="font-size:.82rem">&mdash;</div>
+          </div>
+          <div class="si">
+            <div class="sl">Route</div>
+            <div class="sv" id="t-route" style="font-size:.82rem">&mdash;</div>
+          </div>
+        </div>
+        {% endif %}
+      </div>
+    </details>
   </div>
 
   <!-- ─── Notifications ─── -->
@@ -306,6 +416,39 @@ async function stopMon() {
   poll();
 }
 
+/* ── train ── */
+async function saveTrain() {
+  const r = await api('/api/train', {
+    train_number: $('t-num').value, train_name: $('t-name').value,
+    from_station: $('t-from').value, to_station: $('t-to').value,
+    travel_date: $('t-date').value, class_code: $('t-class').value,
+    quota: $('t-quota').value, fare_budget: $('t-budget').value,
+    notify_on_available: true
+  });
+  r.ok ? (toast('Train saved'), updateTrain(r.train)) : toast(r.error||'Save failed', false);
+  poll();
+}
+
+async function checkTrain() {
+  const btn = $('btn-tchk');
+  btn.disabled = true; btn.textContent = 'Checking\u2026';
+  try {
+    const r = await api('/api/train/check', {});
+    r.ok ? (toast('Train check complete'), updateTrain(r.train)) : toast(r.error||'Check failed', false);
+  } catch(e) { toast('Network error', false); }
+  btn.disabled = false; btn.textContent = 'Check now';
+  poll();
+}
+
+function updateTrain(t) {
+  if (!t) return;
+  const fe = $('t-fare'), ae = $('t-avail'), te = $('t-time'), re = $('t-route');
+  if (fe) fe.textContent = t.last_fare != null ? t.last_fare : '\u2014';
+  if (ae) ae.textContent = t.last_availability || '\u2014';
+  if (te) te.textContent = t.last_checked_iso || '\u2014';
+  if (re) re.textContent = t.from_station && t.to_station ? t.from_station+' \u2192 '+t.to_station : '\u2014';
+}
+
 /* ── notifications ── */
 function notifyData() {
   return {
@@ -330,6 +473,7 @@ async function poll() {
   try {
     const r = await api('/api/status');
     if (r.item) updateItem(r.item);
+    if (r.train) updateTrain(r.train);
     setMon(r.monitoring);
     if (r.logs) setLogs(r.logs);
   } catch(e) {}
