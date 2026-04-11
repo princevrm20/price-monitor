@@ -307,7 +307,35 @@ def _bootstrap() -> None:
     _add_log(f"Auto-started monitoring (every {_monitor_interval_min} min)")
 
 
-# Run bootstrap in a background thread so gunicorn workers start cleanly.
+# ---------------------------------------------------------------------------
+# Self-ping: keep free-tier hosts (Render, etc.) from sleeping
+# ---------------------------------------------------------------------------
+
+def _keep_alive_loop() -> None:
+    """Ping our own /health endpoint every 13 minutes so the free instance
+    stays awake.  Uses RENDER_EXTERNAL_URL (set automatically by Render)
+    or PRICE_MONITOR_EXTERNAL_URL if provided manually."""
+    import time
+
+    time.sleep(10)
+    ext = (
+        os.environ.get("RENDER_EXTERNAL_URL")
+        or os.environ.get("PRICE_MONITOR_EXTERNAL_URL", "").strip()
+    )
+    if not ext:
+        return
+    url = f"{ext.rstrip('/')}/health"
+    _add_log(f"Keep-alive enabled: pinging {url} every 13 min")
+    while True:
+        time.sleep(13 * 60)
+        try:
+            import httpx
+            httpx.get(url, timeout=30)
+        except Exception:  # noqa: BLE001
+            pass
+
+
+# Run bootstrap and keep-alive in background threads.
 def _deferred_bootstrap() -> None:
     import time
     time.sleep(2)
@@ -317,6 +345,7 @@ def _deferred_bootstrap() -> None:
         _add_log(f"Bootstrap error: {exc}")
 
 threading.Thread(target=_deferred_bootstrap, daemon=True).start()
+threading.Thread(target=_keep_alive_loop, daemon=True).start()
 
 
 def run_web(host: str = "0.0.0.0", port: int = 8080) -> None:
