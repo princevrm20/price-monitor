@@ -1,0 +1,15 @@
+len=2592250
+b'priceToPay' idx=389351
+b'apexPriceToPay' idx=-1
+b'buyingPrice' idx=215409
+b'displayAmount' idx=-1
+b'a-color-price' idx=271330
+.a-price.aok-align-center .a-offscreen -> ascii=b'?578.00'
+#corePriceDisplay_desktop_feature_div .a-price .a-offscreen -> ascii=b''
+#apex_desktop .a-price .a-offscreen -> ascii=b''
+.reinventPricePriceToPayMargin .a-offscreen -> ascii=b''
+#corePrice_feature_div .a-price .a-offscreen -> ascii=b'?578.00'
+#ppd .a-offscreen -> ascii=b'?578.00'
+span.a-price.a-text-price .a-offscreen -> ascii=b'?5,999'
+#mobile-price .a-offscreen -> ascii=b''
+#olp-upd-new-used-fsx-price .a-color-price -> ascii=b''

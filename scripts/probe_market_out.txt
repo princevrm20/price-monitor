@@ -1,0 +1,21 @@
+=== flipkart OK len=1705716 url=https://www.flipkart.com/poco-c75-5g-silver-stardust-64-gb/p/itm8e3f17
+  'application/ld+json': True
+  '__NEXT_DATA__': False
+  'SellingPrice': False
+  'price': True
+  'offers': True
+=== myntra OK len=443767 url=https://www.myntra.com/tshirts/tqh/tqh-men-typography-printed-slim-fit
+  'application/ld+json': True
+  '__NEXT_DATA__': False
+  'SellingPrice': False
+  'price': True
+  'offers': True
+=== ajio FAIL HTTPStatusError("Client error '403 Forbidden' for url 'https://www.ajio.com/ajio-checked-slim-fit-shirt-with-back-print/p/460278215_blue'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403") url=https://www.ajio.com/ajio-checked-slim-fit-shirt-with-back-print/p/460
+=== ixigo_flight OK len=714162 url=https://www.ixigo.com/cheap-flights/new-delhi-pune-del-pnq
+  'application/ld+json': True
+  '__NEXT_DATA__': True
+  'SellingPrice': False
+  'price': True
+  'offers': True
+=== ixigo_train FAIL HTTPStatusError("Server error '500 Internal Server Error' for url 'https://www.ixigo.com/trains/jammu-to-kanpur-trains'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/500") url=https://www.ixigo.com/trains/jammu-to-kanpur-trains
+=== udemy FAIL HTTPStatusError("Client error '403 Forbidden' for url 'https://www.udemy.com/course/web-scraping-python-tutorial/'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403") url=https://www.udemy.com/course/web-scraping-python-tutorial/

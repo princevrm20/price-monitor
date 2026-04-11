@@ -1,0 +1,35 @@
+services:
+  - type: web
+    name: price-monitor
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn price_monitor.web:app --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 120
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.0"
+      - key: PRICE_MONITOR_DESKTOP
+        value: "0"
+      - key: PRICE_MONITOR_DATA_DIR
+        value: /tmp/pm_data
+      - key: PRICE_MONITOR_AUTO_START
+        value: "1"
+      - key: PRICE_MONITOR_CHECK_INTERVAL
+        value: "60"
+      # ── Set these in the Render dashboard after first deploy ──
+      # Product to track:
+      - key: PRICE_MONITOR_PRODUCT_NAME
+        sync: false
+      - key: PRICE_MONITOR_PRODUCT_URL
+        sync: false
+      - key: PRICE_MONITOR_PRODUCT_BUDGET
+        sync: false
+      - key: PRICE_MONITOR_PRODUCT_SELECTOR
+        sync: false
+      # Notifications (at least one channel):
+      - key: PRICE_MONITOR_NTFY_TOPIC
+        sync: false
+      - key: PRICE_MONITOR_TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: PRICE_MONITOR_TELEGRAM_CHAT_ID
+        sync: false

@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Price Monitor</title>
+  <style>
+    :root {
+      --primary: #4f46e5; --primary-hover: #4338ca;
+      --bg: #f1f5f9; --card: #fff; --text: #1e293b; --muted: #64748b;
+      --border: #e2e8f0; --success: #16a34a; --danger: #dc2626; --warn: #d97706;
+      --radius: 10px;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+           background: var(--bg); color: var(--text); line-height: 1.6; }
+    header { background: linear-gradient(135deg, #4f46e5, #7c3aed); color: #fff;
+             padding: 1.25rem 1rem; text-align: center; }
+    header h1 { font-size: 1.4rem; font-weight: 700; }
+    header p  { font-size: 0.82rem; opacity: .85; margin-top: .2rem; }
+    main { max-width: 680px; margin: 0 auto; padding: 1rem; }
+
+    .card { background: var(--card); border-radius: var(--radius);
+            border: 1px solid var(--border); padding: 1.25rem; margin-bottom: 1rem; }
+    .card h2 { font-size: 1.05rem; font-weight: 600; margin-bottom: .85rem; }
+
+    .fg { margin-bottom: .7rem; }
+    .fg label { display: block; font-size: .84rem; font-weight: 500; margin-bottom: .2rem; }
+    .fg .req { color: var(--danger); font-weight: 700; }
+    .hint { font-size: .72rem; color: var(--muted); margin-top: .15rem; }
+    input[type=text], input[type=number], input[type=password], input[type=url] {
+      width: 100%; padding: .48rem .7rem; border: 1px solid var(--border); border-radius: 6px;
+      font-size: .88rem; outline: none; transition: border-color .2s; }
+    input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(79,70,229,.12); }
+
+    .btn { display: inline-flex; align-items: center; gap: .4rem; padding: .48rem 1rem;
+           border-radius: 6px; font-size: .84rem; font-weight: 500; border: none;
+           cursor: pointer; transition: all .15s; }
+    .btn:disabled { opacity: .45; cursor: not-allowed; }
+    .bp { background: var(--primary); color: #fff; } .bp:hover:not(:disabled) { background: var(--primary-hover); }
+    .bs { background: var(--success); color: #fff; } .bs:hover:not(:disabled) { background: #15803d; }
+    .bd { background: var(--danger); color: #fff; }  .bd:hover:not(:disabled) { background: #b91c1c; }
+    .bo { background: transparent; border: 1px solid var(--border); color: var(--text); }
+    .bo:hover:not(:disabled) { background: var(--bg); }
+    .br { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .85rem; }
+
+    .sg { display: grid; grid-template-columns: 1fr 1fr; gap: .65rem; margin-bottom: .85rem; }
+    .si { padding: .65rem; background: var(--bg); border-radius: 6px; }
+    .si .sl { font-size: .7rem; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+    .si .sv { font-size: 1.05rem; font-weight: 600; margin-top: .15rem; }
+
+    .ir { display: flex; align-items: center; gap: .5rem; margin-bottom: .6rem; flex-wrap: wrap; }
+    .ir input { width: 80px; }
+    .ir span { font-size: .84rem; color: var(--muted); }
+
+    .badge { display: inline-block; padding: .2rem .65rem; border-radius: 999px;
+             font-size: .72rem; font-weight: 600; }
+    .badge-on  { background: #dcfce7; color: #166534; }
+    .badge-off { background: #f1f5f9; color: var(--muted); }
+
+    .log { background: #1e293b; color: #cbd5e1; padding: .7rem; border-radius: 6px;
+           font-family: Consolas, Monaco, monospace; font-size: .78rem; height: 220px;
+           overflow-y: auto; white-space: pre-wrap; word-break: break-word; }
+
+    details summary { cursor: pointer; font-weight: 600; font-size: .95rem; list-style: none; }
+    details summary::-webkit-details-marker { display: none; }
+    details summary::before { content: '\25B6\FE0E '; font-size: .7rem; display: inline-block;
+                              transition: transform .2s; margin-right: .4rem; }
+    details[open] summary::before { transform: rotate(90deg); }
+    details .inner { margin-top: .85rem; }
+
+    .toast { position: fixed; bottom: 1.2rem; right: 1.2rem; padding: .65rem 1.1rem;
+             border-radius: 8px; color: #fff; font-size: .84rem; font-weight: 500;
+             transform: translateY(80px); opacity: 0; transition: all .25s; z-index: 999;
+             max-width: 340px; }
+    .toast.show { transform: translateY(0); opacity: 1; }
+    .toast-ok  { background: var(--success); }
+    .toast-err { background: var(--danger); }
+
+    @media (max-width: 520px) {
+      .sg { grid-template-columns: 1fr; }
+      .br { flex-direction: column; }
+      .btn { width: 100%; justify-content: center; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>Price Monitor</h1>
+  <p>Track product prices 24/7 &mdash; get notified on any device when they drop</p>
+</header>
+
+<main>
+  <!-- ─── Product ─── -->
+  <div class="card">
+    <h2>Product to Track</h2>
+    <div class="fg">
+      <label>Product name <span class="req">*</span></label>
+      <input type="text" id="f-name" value="{{ item.name if item else '' }}">
+    </div>
+    <div class="fg">
+      <label>Product page URL <span class="req">*</span></label>
+      <input type="url" id="f-url" value="{{ item.url if item else '' }}">
+    </div>
+    <div class="fg">
+      <label>Budget (max price) <span class="req">*</span></label>
+      <input type="text" id="f-budget" value="{{ '{:g}'.format(item.budget) if item else '' }}">
+    </div>
+    <div class="fg">
+      <label>CSS selector for price <span style="color:var(--muted);font-weight:400">(optional)</span></label>
+      <input type="text" id="f-sel" value="{{ item.price_selector or '' if item else '' }}">
+      <p class="hint">Leave blank for Amazon, Flipkart, Myntra, ixigo (auto-detected).</p>
+    </div>
+    <div class="fg">
+      <label>Monitor until <span style="color:var(--muted);font-weight:400">(optional)</span></label>
+      <input type="text" id="f-until" value="{{ item.monitor_until_iso or '' if item else '' }}" placeholder="YYYY-MM-DD">
+      <p class="hint">Leave blank to monitor indefinitely.</p>
+    </div>
+    <div class="br">
+      <button class="btn bp" onclick="saveProduct()">Save product</button>
+    </div>
+  </div>
+
+  <!-- ─── Status ─── -->
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.85rem">
+      <h2 style="margin:0">Status</h2>
+      <span class="badge {{ 'badge-on' if monitoring else 'badge-off' }}" id="badge">
+        {{ 'Monitoring' if monitoring else 'Idle' }}
+      </span>
+    </div>
+    <div class="sg">
+      <div class="si">
+        <div class="sl">Last Price</div>
+        <div class="sv" id="s-price">{{ '{:g}'.format(item.last_price) if item and item.last_price is not none else '\u2014' }}</div>
+      </div>
+      <div class="si">
+        <div class="sl">Budget</div>
+        <div class="sv" id="s-budget">{{ '{:g}'.format(item.budget) if item else '\u2014' }}</div>
+      </div>
+      <div class="si">
+        <div class="sl">Last Check</div>
+        <div class="sv" id="s-time" style="font-size:.82rem">{{ item.last_checked_iso or '\u2014' if item else '\u2014' }}</div>
+      </div>
+      <div class="si">
+        <div class="sl">Verdict</div>
+        <div class="sv" id="s-verdict">
+          {% if item and item.last_price is not none %}
+            {% if item.last_price <= item.budget %}
+              <span style="color:var(--success)">At/below budget</span>
+            {% else %}
+              <span style="color:var(--warn)">Above budget</span>
+            {% endif %}
+          {% else %}&mdash;{% endif %}
+        </div>
+      </div>
+    </div>
+    <div class="ir">
+      <label style="margin:0;white-space:nowrap">Check every</label>
+      <input type="number" id="f-interval" value="{{ interval }}" min="1" max="1440">
+      <span>minutes</span>
+    </div>
+    <div class="br">
+      <button class="btn bs" id="btn-start" onclick="startMon()" {% if monitoring %}style="display:none"{% endif %}>Start monitoring</button>
+      <button class="btn bd" id="btn-stop"  onclick="stopMon()"  {% if not monitoring %}style="display:none"{% endif %}>Stop monitoring</button>
+      <button class="btn bo" id="btn-check" onclick="checkNow()">Check price now</button>
+    </div>
+  </div>
+
+  <!-- ─── Notifications ─── -->
+  <div class="card">
+    <details>
+      <summary>Notification Settings</summary>
+      <div class="inner">
+        <p class="hint" style="margin-bottom:.85rem">
+          Configure how you receive alerts when the price drops.
+          Use ntfy (install the app on your phone), Telegram, WhatsApp via CallMeBot, or a webhook URL.
+        </p>
+        <div class="fg">
+          <label>ntfy topic (secret)</label>
+          <input type="text" id="n-ntfy-topic" value="{{ notify.get('ntfy_topic','') }}">
+        </div>
+        <div class="fg">
+          <label>ntfy server</label>
+          <input type="text" id="n-ntfy-server" value="{{ notify.get('ntfy_server','https://ntfy.sh') }}">
+        </div>
+        <div class="fg">
+          <label>Telegram bot token</label>
+          <input type="password" id="n-tg-token" value="{{ notify.get('telegram_bot_token','') }}">
+        </div>
+        <div class="fg">
+          <label>Telegram chat ID</label>
+          <input type="text" id="n-tg-chat" value="{{ notify.get('telegram_chat_id','') }}">
+        </div>
+        <div class="fg">
+          <label>Webhook URL</label>
+          <input type="url" id="n-webhook" value="{{ notify.get('webhook_url','') }}">
+        </div>
+        <div class="fg">
+          <label>CallMeBot phone (+country\u2026)</label>
+          <input type="text" id="n-cm-phone" value="{{ notify.get('callmebot_phone','') }}">
+        </div>
+        <div class="fg">
+          <label>CallMeBot API key</label>
+          <input type="password" id="n-cm-key" value="{{ notify.get('callmebot_apikey','') }}">
+        </div>
+        <div class="br">
+          <button class="btn bp" onclick="saveNotify()">Save settings</button>
+          <button class="btn bo" onclick="testNotify()">Send test</button>
+        </div>
+      </div>
+    </details>
+  </div>
+
+  <!-- ─── Log ─── -->
+  <div class="card">
+    <h2>Activity Log</h2>
+    <div class="log" id="log">{{ logs|join('\n') if logs else 'No activity yet.' }}</div>
+  </div>
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script>
+let isMonitoring = {{ 'true' if monitoring else 'false' }};
+let pollTimer = null;
+
+/* ── helpers ── */
+const $ = id => document.getElementById(id);
+
+function toast(msg, ok=true) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.className = 'toast ' + (ok ? 'toast-ok' : 'toast-err') + ' show';
+  clearTimeout(t._tid);
+  t._tid = setTimeout(() => t.classList.remove('show'), 3500);
+}
+
+async function api(url, body) {
+  const r = await fetch(url, body !== undefined
+    ? { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) }
+    : { method:'GET' });
+  return r.json();
+}
+
+function updateItem(it) {
+  if (!it) return;
+  $('s-price').textContent  = it.last_price != null ? it.last_price : '\u2014';
+  $('s-budget').textContent = it.budget != null ? it.budget : '\u2014';
+  $('s-time').textContent   = it.last_checked_iso || '\u2014';
+  const v = $('s-verdict');
+  if (it.last_price != null) {
+    v.innerHTML = it.last_price <= it.budget
+      ? '<span style="color:var(--success)">At/below budget</span>'
+      : '<span style="color:var(--warn)">Above budget</span>';
+  } else { v.textContent = '\u2014'; }
+}
+
+function setMon(on) {
+  isMonitoring = on;
+  const b = $('badge');
+  b.textContent = on ? 'Monitoring' : 'Idle';
+  b.className = 'badge ' + (on ? 'badge-on' : 'badge-off');
+  $('btn-start').style.display = on ? 'none' : '';
+  $('btn-stop').style.display  = on ? '' : 'none';
+  on ? startPoll() : stopPoll();
+}
+
+function setLogs(lines) {
+  $('log').textContent = lines.length ? lines.join('\n') : 'No activity yet.';
+}
+
+/* ── product ── */
+async function saveProduct() {
+  const r = await api('/api/product', {
+    name: $('f-name').value, url: $('f-url').value, budget: $('f-budget').value,
+    selector: $('f-sel').value, until: $('f-until').value
+  });
+  r.ok ? (toast('Product saved'), updateItem(r.item)) : toast(r.error||'Save failed', false);
+  poll();
+}
+
+/* ── check ── */
+async function checkNow() {
+  const btn = $('btn-check');
+  btn.disabled = true; btn.textContent = 'Checking\u2026';
+  try {
+    const r = await api('/api/check', {});
+    r.ok ? (toast('Price check complete'), updateItem(r.item)) : toast(r.error||'Check failed', false);
+  } catch(e) { toast('Network error', false); }
+  btn.disabled = false; btn.textContent = 'Check price now';
+  poll();
+}
+
+/* ── monitor ── */
+async function startMon() {
+  const iv = parseInt($('f-interval').value) || 60;
+  const r = await api('/api/monitor/start', { interval: iv });
+  r.ok ? (toast('Monitoring started'), setMon(true)) : toast(r.error||'Failed', false);
+}
+async function stopMon() {
+  await api('/api/monitor/stop', {});
+  toast('Monitoring stopped');
+  setMon(false);
+  poll();
+}
+
+/* ── notifications ── */
+function notifyData() {
+  return {
+    desktop: false,
+    ntfy_topic: $('n-ntfy-topic').value, ntfy_server: $('n-ntfy-server').value || 'https://ntfy.sh',
+    telegram_bot_token: $('n-tg-token').value, telegram_chat_id: $('n-tg-chat').value,
+    webhook_url: $('n-webhook').value,
+    callmebot_phone: $('n-cm-phone').value, callmebot_apikey: $('n-cm-key').value
+  };
+}
+async function saveNotify() {
+  const r = await api('/api/notifications', notifyData());
+  toast(r.ok ? 'Settings saved' : (r.error||'Failed'), r.ok);
+}
+async function testNotify() {
+  const r = await api('/api/notifications/test', notifyData());
+  toast(r.ok ? 'Test sent!' : (r.error||'Test failed'), r.ok);
+}
+
+/* ── polling ── */
+async function poll() {
+  try {
+    const r = await api('/api/status');
+    if (r.item) updateItem(r.item);
+    setMon(r.monitoring);
+    if (r.logs) setLogs(r.logs);
+  } catch(e) {}
+}
+function startPoll() { if (!pollTimer) pollTimer = setInterval(poll, 5000); }
+function stopPoll()  { clearInterval(pollTimer); pollTimer = null; }
+
+if (isMonitoring) startPoll();
+poll();
+</script>
+</body>
+</html>

@@ -1,0 +1,21 @@
+services:
+  price-monitor:
+    build: .
+    ports:
+      - "8080:8080"
+    volumes:
+      - price_data:/data
+    environment:
+      - PRICE_MONITOR_DATA_DIR=/data
+      - PRICE_MONITOR_DESKTOP=0
+      # Uncomment and fill in to pre-configure notification channels:
+      # - PRICE_MONITOR_NTFY_TOPIC=my-secret-topic
+      # - PRICE_MONITOR_TELEGRAM_BOT_TOKEN=
+      # - PRICE_MONITOR_TELEGRAM_CHAT_ID=
+      # - PRICE_MONITOR_WEBHOOK_URL=
+      # - PRICE_MONITOR_CALLMEBOT_PHONE=
+      # - PRICE_MONITOR_CALLMEBOT_APIKEY=
+    restart: unless-stopped
+
+volumes:
+  price_data:
