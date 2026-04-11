@@ -2,3 +2,9 @@ __pycache__/
 *.pyc
 .pytest_cache/
 data/notify.json
+data/monitors.json
+data/events.json
+data/settings.json
+data/audit_log.json
+data/trains.json
+debug_output.html

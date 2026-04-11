@@ -279,6 +279,24 @@ def _amazon_regex_price_from_html(html: str) -> float | None:
     return None
 
 
+def _is_flipkart_url(url: str | None) -> bool:
+    if not url:
+        return False
+    return "flipkart.com" in url.lower()
+
+
+def _flipkart_selector_fallbacks() -> list[str]:
+    return [
+        "div._30jeq3._16Jk6d",
+        "div._30jeq3",
+        "div._25b18c span._16Jk6d",
+        "div.Nx9bqj.CxhGGd",
+        "div.Nx9bqj",
+        "div._3I9_wc span._16Jk6d",
+        "span.B_NuCI",
+    ]
+
+
 def extract_price(html: str, price_selector: str | None, product_url: str | None = None) -> float | None:
     soup = _make_soup(html)
 
@@ -287,6 +305,10 @@ def extract_price(html: str, price_selector: str | None, product_url: str | None
         selectors.append(price_selector.strip())
     if _is_amazon_url(product_url):
         for s in _amazon_selector_fallbacks():
+            if s not in selectors:
+                selectors.append(s)
+    if _is_flipkart_url(product_url):
+        for s in _flipkart_selector_fallbacks():
             if s not in selectors:
                 selectors.append(s)
 
@@ -319,7 +341,6 @@ def extract_price(html: str, price_selector: str | None, product_url: str | None
     if ld is not None:
         return ld
 
-    # Last resort: scan visible body text (noisy; may be wrong on complex pages).
     body = soup.body
     if body:
         return _first_float(body.get_text(" ", strip=True))

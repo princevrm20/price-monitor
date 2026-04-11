@@ -4,6 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Admin - Price Monitor</title>
+<link rel="manifest" href="/static/manifest.json">
+<meta name="theme-color" content="#4f46e5">
 <style>
 :root,[data-theme="light"]{--primary:#4f46e5;--primary-hover:#4338ca;--bg:#f1f5f9;--card:#fff;--text:#1e293b;--muted:#64748b;--border:#e2e8f0;--success:#16a34a;--danger:#dc2626;--warn:#d97706;--radius:10px;--header-bg:linear-gradient(135deg,#4f46e5,#7c3aed);--log-bg:#1e293b;--log-fg:#cbd5e1;--table-stripe:#f8fafc;}
 [data-theme="dark"]{--bg:#0f172a;--card:#1e293b;--text:#e2e8f0;--muted:#94a3b8;--border:#334155;--header-bg:linear-gradient(135deg,#312e81,#581c87);--log-bg:#0f172a;--log-fg:#94a3b8;--table-stripe:#1e293b;}
@@ -29,14 +31,15 @@ main{max-width:1100px;margin:0 auto;padding:1rem;}
 .fg label{display:block;font-size:.82rem;font-weight:500;margin-bottom:.2rem;}
 .fg .req{color:var(--danger);font-weight:700;}
 .hint{font-size:.72rem;color:var(--muted);margin-top:.15rem;}
-input[type=text],input[type=number],input[type=password],input[type=url],select{width:100%;padding:.45rem .65rem;border:1px solid var(--border);border-radius:6px;font-size:.86rem;outline:none;background:var(--card);color:var(--text);}
+input[type=text],input[type=number],input[type=password],input[type=url],input[type=email],select{width:100%;padding:.45rem .65rem;border:1px solid var(--border);border-radius:6px;font-size:.86rem;outline:none;background:var(--card);color:var(--text);}
 input:focus,select:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(79,70,229,.12);}
-.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:.6rem;margin-bottom:1rem;}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));gap:.6rem;margin-bottom:1rem;}
 .stat{padding:.7rem;background:var(--bg);border-radius:6px;text-align:center;}
 .stat .sv{font-size:1.4rem;font-weight:700;}
 .stat .sl{font-size:.7rem;text-transform:uppercase;color:var(--muted);letter-spacing:.03em;}
 .badge{display:inline-block;padding:.15rem .55rem;border-radius:999px;font-size:.7rem;font-weight:600;}
 .b-active{background:#dcfce7;color:#166534;}.b-paused{background:#fef3c7;color:#92400e;}.b-completed{background:#dbeafe;color:#1e40af;}.b-expired{background:#f1f5f9;color:var(--muted);}
+.tag{display:inline-block;padding:.1rem .4rem;border-radius:4px;font-size:.65rem;font-weight:500;background:var(--primary);color:#fff;margin:.1rem;}
 .filters{display:flex;flex-wrap:wrap;gap:.5rem;margin-bottom:1rem;align-items:center;}
 .filters select{width:auto;min-width:100px;font-size:.8rem;padding:.35rem .5rem;}
 .filters .btn{font-size:.76rem;padding:.35rem .6rem;}
@@ -51,7 +54,7 @@ td a{color:var(--primary);text-decoration:none;font-weight:500;}td a:hover{text-
 .log{background:var(--log-bg);color:var(--log-fg);padding:.7rem;border-radius:6px;font-family:Consolas,Monaco,monospace;font-size:.76rem;height:200px;overflow-y:auto;white-space:pre-wrap;word-break:break-word;}
 .modal-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:100;align-items:center;justify-content:center;}
 .modal-bg.show{display:flex;}
-.modal{background:var(--card);border-radius:var(--radius);padding:1.5rem;width:95%;max-width:520px;max-height:90vh;overflow-y:auto;}
+.modal{background:var(--card);border-radius:var(--radius);padding:1.5rem;width:95%;max-width:560px;max-height:90vh;overflow-y:auto;}
 .modal h2{margin-bottom:1rem;}
 .toast{position:fixed;bottom:1.2rem;right:1.2rem;padding:.6rem 1rem;border-radius:8px;color:#fff;font-size:.82rem;font-weight:500;transform:translateY(80px);opacity:0;transition:.25s;z-index:999;max-width:340px;}
 .toast.show{transform:translateY(0);opacity:1;}.toast-ok{background:var(--success);}.toast-err{background:var(--danger);}
@@ -61,6 +64,11 @@ details summary::before{content:'\25B6\FE0E ';font-size:.7rem;display:inline-blo
 details[open] summary::before{transform:rotate(90deg);}
 details .inner{margin-top:.85rem;}
 .empty{text-align:center;padding:2rem;color:var(--muted);font-size:.9rem;}
+.health-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;vertical-align:middle;}
+.h-ok{background:var(--success);}.h-warn{background:var(--warn);}.h-err{background:var(--danger);}
+.bulk-bar{display:none;position:fixed;bottom:0;left:0;right:0;background:var(--card);border-top:2px solid var(--primary);padding:.7rem 1.5rem;z-index:50;gap:.5rem;align-items:center;justify-content:center;box-shadow:0 -2px 8px rgba(0,0,0,.1);}
+.bulk-bar.show{display:flex;}
+.role-badge{font-size:.65rem;padding:.15rem .4rem;border-radius:4px;background:rgba(255,255,255,.2);margin-left:.4rem;}
 @media(max-width:700px){
   table{font-size:.76rem;}th,td{padding:.4rem .3rem;}
   .stats{grid-template-columns:1fr 1fr;}
@@ -71,7 +79,7 @@ details .inner{margin-top:.85rem;}
 </head>
 <body>
 <header>
-  <h1>Price Monitor Admin</h1>
+  <h1>Price Monitor Admin<span class="role-badge">{{ role }}</span></h1>
   <div class="hdr-r">
     <span class="badge {{ 'b-active' if monitoring else 'b-paused' }}" id="badge-mon">{{ 'Monitoring' if monitoring else 'Idle' }}</span>
     <button onclick="toggleTheme()">Theme</button>
@@ -85,61 +93,79 @@ details .inner{margin-top:.85rem;}
   <div class="stat"><div class="sv" id="st-total">{{ monitors|length }}</div><div class="sl">Total</div></div>
   <div class="stat"><div class="sv" id="st-active">{{ monitors|selectattr('status','equalto','active')|list|length }}</div><div class="sl">Active</div></div>
   <div class="stat"><div class="sv" id="st-paused">{{ monitors|selectattr('status','equalto','paused')|list|length }}</div><div class="sl">Paused</div></div>
-  <div class="stat"><div class="sv" id="st-completed">{{ monitors|selectattr('status','equalto','completed')|list|length }}</div><div class="sl">Completed</div></div>
+  <div class="stat"><div class="sv" id="st-expired">{{ monitors|selectattr('status','equalto','expired')|list|length }}</div><div class="sl">Expired</div></div>
 </div>
 
+{% if role == 'admin' %}
 <!-- Controls -->
 <div class="card">
   <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem">
     <div class="br" style="margin:0">
       <button class="btn bp" onclick="openCreate('product')">+ Product</button>
       <button class="btn bp" onclick="openCreate('train')">+ Train</button>
+      <button class="btn bp" onclick="openCreate('flight')">+ Flight</button>
     </div>
     <div class="br" style="margin:0">
+      <button class="btn bo" onclick="exportAll()">Export All</button>
+      <button class="btn bo" onclick="$('import-file').click()">Import</button>
+      <input type="file" id="import-file" accept=".json" style="display:none" onchange="importFile(this)">
       <button class="btn bs" id="btn-start" onclick="startLoop()">Start Monitoring</button>
       <button class="btn bd" id="btn-stop" onclick="stopLoop()">Stop Monitoring</button>
+      <button class="btn bo" onclick="sendDigest()">Send Digest</button>
     </div>
   </div>
 </div>
+{% endif %}
 
 <!-- Filters -->
 <div class="card">
   <form class="filters" method="GET">
-    <select name="type"><option value="">All types</option><option value="product" {{ 'selected' if filt_type=='product' }}>Product</option><option value="train" {{ 'selected' if filt_type=='train' }}>Train</option></select>
+    <select name="type"><option value="">All types</option><option value="product" {{ 'selected' if filt_type=='product' }}>Product</option><option value="train" {{ 'selected' if filt_type=='train' }}>Train</option><option value="flight" {{ 'selected' if filt_type=='flight' }}>Flight</option></select>
     <select name="status"><option value="">All statuses</option><option value="active" {{ 'selected' if filt_status=='active' }}>Active</option><option value="paused" {{ 'selected' if filt_status=='paused' }}>Paused</option><option value="completed" {{ 'selected' if filt_status=='completed' }}>Completed</option><option value="expired" {{ 'selected' if filt_status=='expired' }}>Expired</option></select>
     <select name="category"><option value="">All categories</option>{% for c in categories %}<option value="{{ c }}" {{ 'selected' if filt_category==c }}>{{ c }}</option>{% endfor %}</select>
+    <select name="tag"><option value="">All tags</option>{% for t in all_tags %}<option value="{{ t }}" {{ 'selected' if filt_tag==t }}>{{ t }}</option>{% endfor %}</select>
     <button type="submit" class="btn bo">Filter</button>
     <a href="/" class="btn bo">Clear</a>
   </form>
 
-  <!-- Monitors Table -->
   {% if monitors %}
   <div style="overflow-x:auto">
   <table>
     <thead><tr>
-      <th>Name</th><th>Type</th><th>Status</th><th>Last Value</th><th>Last Check</th><th>Category</th><th>Actions</th>
+      {% if role == 'admin' %}<th><input type="checkbox" id="sel-all" onchange="toggleAll(this)"></th>{% endif %}
+      <th>Name</th><th>Type</th><th>Status</th><th>Last Value</th><th>Last Check</th><th>Tags</th>
+      {% if role == 'admin' %}<th>Actions</th>{% endif %}
     </tr></thead>
     <tbody>
     {% for m in monitors %}
     <tr>
-      <td><a href="/monitor/{{ m.id }}">{{ m.name or m.id[:8] }}</a></td>
+      {% if role == 'admin' %}<td><input type="checkbox" class="sel-cb" value="{{ m.id }}" onchange="updateBulk()"></td>{% endif %}
+      <td>
+        {% set errs = m.get('consecutive_errors', 0) %}
+        <span class="health-dot {{ 'h-ok' if errs == 0 else ('h-warn' if errs <= 2 else 'h-err') }}" title="{{ m.get('last_error_msg','OK') }}"></span>
+        <a href="/monitor/{{ m.id }}">{{ m.name or m.id[:8] }}</a>
+      </td>
       <td>{{ m.type }}</td>
       <td><span class="badge b-{{ m.status }}">{{ m.status }}</span></td>
       {% set mlp = m.get('last_price') %}
       {% set mlf = m.get('last_fare') %}
       {% set mla = m.get('last_availability','') %}
+      {% set mlfp = m.get('last_flight_price') %}
       {% set mlc = m.get('last_checked_at','') %}
       <td>
         {% if m.type == 'product' %}
           {{ '{:g}'.format(mlp) if mlp is not none else '—' }}
-        {% else %}
+        {% elif m.type == 'train' %}
           {% if mlf is not none %}fare {{ '{:g}'.format(mlf) }}{% endif %}
           {% if mla %} {{ mla }}{% endif %}
           {% if mlf is none and not mla %}—{% endif %}
+        {% elif m.type == 'flight' %}
+          {{ '{:g}'.format(mlfp) if mlfp is not none else '—' }}
         {% endif %}
       </td>
       <td style="font-size:.78rem">{{ mlc[:19] if mlc else '—' }}</td>
-      <td>{{ m.category or '—' }}</td>
+      <td>{% for tag in (m.get('tags') or []) %}<span class="tag">{{ tag }}</span>{% endfor %}{% if not m.get('tags') and m.get('category') %}<span class="tag">{{ m.category }}</span>{% endif %}</td>
+      {% if role == 'admin' %}
       <td>
         <div class="actions">
           <button class="btn bo" onclick="checkMon('{{ m.id }}',this)">Check</button>
@@ -152,6 +178,7 @@ details .inner{margin-top:.85rem;}
           <button class="btn bd" onclick="delMon('{{ m.id }}','{{ m.name|e }}')">Del</button>
         </div>
       </td>
+      {% endif %}
     </tr>
     {% endfor %}
     </tbody>
@@ -167,7 +194,7 @@ details .inner{margin-top:.85rem;}
   <details>
     <summary>Notification Settings</summary>
     <div class="inner">
-      <p class="hint" style="margin-bottom:.85rem">Configure how you receive alerts.</p>
+      <p class="hint" style="margin-bottom:.85rem">Configure how you receive alerts. Email fields are optional.</p>
       <div class="fg"><label>ntfy topic</label><input type="text" id="n-ntfy-topic"></div>
       <div class="fg"><label>ntfy server</label><input type="text" id="n-ntfy-server" value="https://ntfy.sh"></div>
       <div class="fg"><label>Telegram bot token</label><input type="password" id="n-tg-token"></div>
@@ -175,10 +202,47 @@ details .inner{margin-top:.85rem;}
       <div class="fg"><label>Webhook URL</label><input type="url" id="n-webhook"></div>
       <div class="fg"><label>CallMeBot phone</label><input type="text" id="n-cm-phone"></div>
       <div class="fg"><label>CallMeBot API key</label><input type="password" id="n-cm-key"></div>
+      <hr style="margin:.8rem 0;border:none;border-top:1px solid var(--border)">
+      <p class="hint" style="margin-bottom:.5rem">Email (optional SMTP)</p>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem">
+        <div class="fg"><label>SMTP Host</label><input type="text" id="n-smtp-host" placeholder="smtp.gmail.com"></div>
+        <div class="fg"><label>SMTP Port</label><input type="number" id="n-smtp-port" value="587"></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem">
+        <div class="fg"><label>SMTP User</label><input type="text" id="n-smtp-user"></div>
+        <div class="fg"><label>SMTP Password</label><input type="password" id="n-smtp-pass"></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem">
+        <div class="fg"><label>From address</label><input type="email" id="n-smtp-from"></div>
+        <div class="fg"><label>To address</label><input type="email" id="n-smtp-to"></div>
+      </div>
       <div class="br">
         <button class="btn bp" onclick="saveNotify()">Save</button>
         <button class="btn bo" onclick="testNotify()">Test</button>
       </div>
+    </div>
+  </details>
+</div>
+
+<!-- Audit Log -->
+<div class="card">
+  <details>
+    <summary>Audit Log</summary>
+    <div class="inner">
+      <table style="font-size:.78rem">
+        <thead><tr><th>Time</th><th>Action</th><th>Target</th><th>Role</th></tr></thead>
+        <tbody>
+        {% for a in audit_entries %}
+        <tr>
+          <td>{{ a.created_at[:19] }}</td>
+          <td>{{ a.action }}</td>
+          <td>{{ a.target_name or a.target_id[:8] }}</td>
+          <td>{{ a.user_role }}</td>
+        </tr>
+        {% endfor %}
+        {% if not audit_entries %}<tr><td colspan="4" class="empty">No audit entries yet.</td></tr>{% endif %}
+        </tbody>
+      </table>
     </div>
   </details>
 </div>
@@ -194,10 +258,16 @@ details .inner{margin-top:.85rem;}
 <div class="modal-bg" id="modal-create">
 <div class="modal">
   <h2 id="modal-title">New Monitor</h2>
-  <div class="fg"><label>Type</label><select id="c-type" onchange="toggleFields()"><option value="product">Product</option><option value="train">Train</option></select></div>
+  <div class="fg"><label>Type</label><select id="c-type" onchange="toggleFields()"><option value="product">Product</option><option value="train">Train</option><option value="flight">Flight</option></select></div>
   <div class="fg"><label>Name <span class="req">*</span></label><input type="text" id="c-name"></div>
+  <div class="fg"><label>Tags <span style="color:var(--muted)">(comma separated)</span></label><input type="text" id="c-tags" placeholder="electronics, gifts"></div>
   <div class="fg"><label>Category</label><input type="text" id="c-category" placeholder="e.g. Electronics, Travel"></div>
   <div class="fg"><label>Check interval (min)</label><input type="number" id="c-interval" value="60" min="1" max="1440"></div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem">
+    <div class="fg"><label>Alert Mode</label><select id="c-alert-mode" onchange="toggleAlertFields()"><option value="budget">Budget threshold</option><option value="drop_percent">Price drop %</option><option value="any_change">Any change</option></select></div>
+    <div class="fg" id="fg-drop-pct" style="display:none"><label>Drop % threshold</label><input type="number" id="c-drop-pct" value="10" min="1" max="99"></div>
+  </div>
+  <div class="fg"><label>Comparison Group <span style="color:var(--muted)">(optional)</span></label><input type="text" id="c-comp-group" placeholder="e.g. iphone-15"></div>
 
   <div id="fields-product">
     <div class="fg"><label>URL <span class="req">*</span></label><input type="url" id="c-url"></div>
@@ -216,11 +286,26 @@ details .inner{margin-top:.85rem;}
       <div class="fg"><label>To station <span class="req">*</span></label><input type="text" id="c-to" placeholder="CNB"></div>
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:.5rem">
-      <div class="fg"><label>Travel date <span class="req">*</span></label><input type="text" id="c-date" placeholder="DD-MM-YYYY"></div>
+      <div class="fg"><label>Travel date <span class="req">*</span></label><input type="text" id="c-date" placeholder="YYYY-MM-DD"></div>
       <div class="fg"><label>Class</label><select id="c-class"><option value="1A">1A</option><option value="2A">2A</option><option value="3A">3A</option><option value="SL" selected>SL</option><option value="CC">CC</option><option value="2S">2S</option></select></div>
       <div class="fg"><label>Quota</label><select id="c-quota"><option value="GN" selected>GN</option><option value="TQ">TQ</option></select></div>
     </div>
     <div class="fg"><label>Fare budget <span style="color:var(--muted)">(optional)</span></label><input type="text" id="c-fbudget"></div>
+  </div>
+
+  <div id="fields-flight" style="display:none">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem">
+      <div class="fg"><label>Origin IATA <span class="req">*</span></label><input type="text" id="c-forigin" placeholder="DEL" maxlength="3"></div>
+      <div class="fg"><label>Destination IATA <span class="req">*</span></label><input type="text" id="c-fdest" placeholder="BOM" maxlength="3"></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem">
+      <div class="fg"><label>Travel date <span class="req">*</span></label><input type="text" id="c-fdate" placeholder="YYYY-MM-DD"></div>
+      <div class="fg"><label>Return date <span style="color:var(--muted)">(optional)</span></label><input type="text" id="c-frdate" placeholder="YYYY-MM-DD"></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem">
+      <div class="fg"><label>Max price</label><input type="text" id="c-fmaxprice"></div>
+      <div class="fg"><label>Preferred airline <span style="color:var(--muted)">(IATA code)</span></label><input type="text" id="c-fairline" placeholder="AI" maxlength="2"></div>
+    </div>
   </div>
 
   <div class="br">
@@ -230,11 +315,19 @@ details .inner{margin-top:.85rem;}
 </div>
 </div>
 
+<!-- Bulk action bar -->
+<div class="bulk-bar" id="bulk-bar">
+  <span id="bulk-count">0 selected</span>
+  <button class="btn bw" onclick="bulkAction('pause')">Pause Selected</button>
+  <button class="btn bs" onclick="bulkAction('resume')">Resume Selected</button>
+  <button class="btn bd" onclick="bulkAction('delete')">Delete Selected</button>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
 const $=id=>document.getElementById(id);
-let pollTimer=null;
+let evtSource=null;
 
 function toast(m,ok=true){const t=$('toast');t.textContent=m;t.className='toast '+(ok?'toast-ok':'toast-err')+' show';clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),3500);}
 async function api(url,body){const opts=body!==undefined?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{};if(body===null)opts.method='DELETE';const r=await fetch(url,opts);return r.json();}
@@ -243,17 +336,21 @@ async function api(url,body){const opts=body!==undefined?{method:'POST',headers:
 function toggleTheme(){const h=document.documentElement;const d=h.getAttribute('data-theme')==='dark'?'light':'dark';h.setAttribute('data-theme',d);localStorage.setItem('theme',d);}
 (function(){const t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t);})();
 
+/* Alert mode toggle */
+function toggleAlertFields(){$('fg-drop-pct').style.display=$('c-alert-mode').value==='drop_percent'?'':'none';}
+
 /* Modal */
-function openCreate(type){$('c-type').value=type;toggleFields();$('c-name').value='';$('c-category').value='';$('c-interval').value='60';$('c-url').value='';$('c-budget').value='';$('c-selector').value='';$('c-until').value='';$('c-tnum').value='';$('c-tname').value='';$('c-from').value='';$('c-to').value='';$('c-date').value='';$('c-fbudget').value='';$('modal-title').textContent='New '+type.charAt(0).toUpperCase()+type.slice(1)+' Monitor';$('modal-create').classList.add('show');}
+function openCreate(type){$('c-type').value=type;toggleFields();$('c-name').value='';$('c-tags').value='';$('c-category').value='';$('c-interval').value='60';$('c-alert-mode').value='budget';$('c-drop-pct').value='10';$('c-comp-group').value='';toggleAlertFields();$('c-url').value='';$('c-budget').value='';$('c-selector').value='';$('c-until').value='';$('c-tnum').value='';$('c-tname').value='';$('c-from').value='';$('c-to').value='';$('c-date').value='';$('c-fbudget').value='';$('c-forigin').value='';$('c-fdest').value='';$('c-fdate').value='';$('c-frdate').value='';$('c-fmaxprice').value='';$('c-fairline').value='';$('modal-title').textContent='New '+type.charAt(0).toUpperCase()+type.slice(1)+' Monitor';$('modal-create').classList.add('show');}
 function closeModal(){$('modal-create').classList.remove('show');}
-function toggleFields(){const t=$('c-type').value;$('fields-product').style.display=t==='product'?'':'none';$('fields-train').style.display=t==='train'?'':'none';}
+function toggleFields(){const t=$('c-type').value;$('fields-product').style.display=t==='product'?'':'none';$('fields-train').style.display=t==='train'?'':'none';$('fields-flight').style.display=t==='flight'?'':'none';}
 
 async function submitCreate(){
   const t=$('c-type').value;
-  const base={type:t,name:$('c-name').value,category:$('c-category').value,check_interval_min:parseInt($('c-interval').value)||60};
+  const base={type:t,name:$('c-name').value,tags:$('c-tags').value,category:$('c-category').value,check_interval_min:parseInt($('c-interval').value)||60,alert_mode:$('c-alert-mode').value,alert_drop_percent:$('c-drop-pct').value||null,comparison_group:$('c-comp-group').value};
   let d;
   if(t==='product') d={...base,url:$('c-url').value,budget:$('c-budget').value,price_selector:$('c-selector').value,monitor_until:$('c-until').value};
-  else d={...base,train_number:$('c-tnum').value,train_name:$('c-tname').value,from_station:$('c-from').value,to_station:$('c-to').value,travel_date:$('c-date').value,class_code:$('c-class').value,quota:$('c-quota').value,fare_budget:$('c-fbudget').value};
+  else if(t==='train') d={...base,train_number:$('c-tnum').value,train_name:$('c-tname').value,from_station:$('c-from').value,to_station:$('c-to').value,travel_date:$('c-date').value,class_code:$('c-class').value,quota:$('c-quota').value,fare_budget:$('c-fbudget').value};
+  else d={...base,flight_origin:$('c-forigin').value,flight_destination:$('c-fdest').value,flight_date:$('c-fdate').value,flight_return_date:$('c-frdate').value,flight_max_price:$('c-fmaxprice').value,flight_airline_pref:$('c-fairline').value};
   const r=await api('/api/monitors',d);
   if(r.ok){toast('Monitor created');closeModal();location.reload();}else toast(r.error||'Failed',false);
 }
@@ -265,21 +362,43 @@ async function resumeMon(id){await fetch('/api/monitors/'+id+'/resume',{method:'
 async function dupMon(id){const r=await fetch('/api/monitors/'+id+'/duplicate',{method:'POST'});const j=await r.json();j.ok?toast('Duplicated'):toast(j.error||'Failed',false);location.reload();}
 async function delMon(id,name){if(!confirm('Delete monitor "'+name+'"?'))return;await fetch('/api/monitors/'+id,{method:'DELETE'});toast('Deleted');location.reload();}
 
+/* Bulk */
+function toggleAll(el){document.querySelectorAll('.sel-cb').forEach(c=>c.checked=el.checked);updateBulk();}
+function updateBulk(){const sel=document.querySelectorAll('.sel-cb:checked');$('bulk-count').textContent=sel.length+' selected';$('bulk-bar').classList.toggle('show',sel.length>0);}
+async function bulkAction(action){const ids=[...document.querySelectorAll('.sel-cb:checked')].map(c=>c.value);if(!ids.length)return;if(action==='delete'&&!confirm('Delete '+ids.length+' monitors?'))return;const r=await api('/api/monitors/batch/'+action,{ids});toast(r.ok?action+' done':'Failed',r.ok);location.reload();}
+
+/* Import/Export */
+function exportAll(){window.location='/api/monitors/export-all';}
+async function importFile(input){if(!input.files.length)return;const text=await input.files[0].text();try{const data=JSON.parse(text);const r=await api('/api/monitors/import',data);toast(r.ok?'Imported '+r.count+' monitors':'Failed',r.ok);location.reload();}catch(e){toast('Invalid JSON file',false);}}
+
 /* Monitor loop */
 async function startLoop(){const r=await api('/api/monitor/start',{});r.ok?toast('Monitoring started'):toast(r.error||'Failed',false);poll();}
 async function stopLoop(){await api('/api/monitor/stop',{});toast('Stopped');poll();}
 
+/* Digest */
+async function sendDigest(){const r=await api('/api/digest/send',{});toast(r.ok?'Digest sent':'Failed',r.ok);}
+
 /* Notifications */
-function ndata(){return{desktop:false,ntfy_topic:$('n-ntfy-topic').value,ntfy_server:$('n-ntfy-server').value||'https://ntfy.sh',telegram_bot_token:$('n-tg-token').value,telegram_chat_id:$('n-tg-chat').value,webhook_url:$('n-webhook').value,callmebot_phone:$('n-cm-phone').value,callmebot_apikey:$('n-cm-key').value};}
+function ndata(){return{desktop:false,ntfy_topic:$('n-ntfy-topic').value,ntfy_server:$('n-ntfy-server').value||'https://ntfy.sh',telegram_bot_token:$('n-tg-token').value,telegram_chat_id:$('n-tg-chat').value,webhook_url:$('n-webhook').value,callmebot_phone:$('n-cm-phone').value,callmebot_apikey:$('n-cm-key').value,smtp_host:$('n-smtp-host').value,smtp_port:parseInt($('n-smtp-port').value)||587,smtp_user:$('n-smtp-user').value,smtp_pass:$('n-smtp-pass').value,smtp_from:$('n-smtp-from').value,smtp_to:$('n-smtp-to').value};}
 async function saveNotify(){const r=await api('/api/notifications',ndata());toast(r.ok?'Saved':'Failed',r.ok);}
 async function testNotify(){const r=await api('/api/notifications/test',ndata());toast(r.ok?'Test sent!':'Test failed',r.ok);}
-async function loadNotify(){try{const r=await(await fetch('/api/notifications')).json();const s=r.settings||{};$('n-ntfy-topic').value=s.ntfy_topic||'';$('n-ntfy-server').value=s.ntfy_server||'https://ntfy.sh';$('n-tg-token').value=s.telegram_bot_token||'';$('n-tg-chat').value=s.telegram_chat_id||'';$('n-webhook').value=s.webhook_url||'';$('n-cm-phone').value=s.callmebot_phone||'';$('n-cm-key').value=s.callmebot_apikey||'';}catch(e){}}
+async function loadNotify(){try{const r=await(await fetch('/api/notifications')).json();const s=r.settings||{};$('n-ntfy-topic').value=s.ntfy_topic||'';$('n-ntfy-server').value=s.ntfy_server||'https://ntfy.sh';$('n-tg-token').value=s.telegram_bot_token||'';$('n-tg-chat').value=s.telegram_chat_id||'';$('n-webhook').value=s.webhook_url||'';$('n-cm-phone').value=s.callmebot_phone||'';$('n-cm-key').value=s.callmebot_apikey||'';$('n-smtp-host').value=s.smtp_host||'';$('n-smtp-port').value=s.smtp_port||587;$('n-smtp-user').value=s.smtp_user||'';$('n-smtp-pass').value=s.smtp_pass||'';$('n-smtp-from').value=s.smtp_from||'';$('n-smtp-to').value=s.smtp_to||'';}catch(e){}}
 
-/* Polling */
+/* SSE + Polling fallback */
+function initSSE(){
+  if(evtSource)evtSource.close();
+  try{
+    evtSource=new EventSource('/api/stream');
+    evtSource.onmessage=function(e){try{const d=JSON.parse(e.data);if(d.type==='log'){const el=$('log');el.textContent=d.message+'\n'+el.textContent;}}catch(ex){}};
+    evtSource.onerror=function(){evtSource.close();evtSource=null;};
+  }catch(e){}
+}
+
 async function poll(){try{const r=await(await fetch('/api/status')).json();$('log').textContent=r.logs&&r.logs.length?r.logs.join('\n'):'No activity yet.';const b=$('badge-mon');b.textContent=r.monitoring?'Monitoring':'Idle';b.className='badge '+(r.monitoring?'b-active':'b-paused');}catch(e){}}
-setInterval(poll,5000);
+setInterval(poll,8000);
 loadNotify();
 poll();
+initSSE();
 
 $('modal-create').addEventListener('click',e=>{if(e.target===$('modal-create'))closeModal();});
 </script>

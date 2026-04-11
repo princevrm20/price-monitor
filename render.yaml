@@ -17,6 +17,8 @@ services:
       # Admin auth:
       - key: ADMIN_PASSWORD
         sync: false
+      - key: VIEWER_PASSWORD
+        sync: false
       - key: SECRET_KEY
         generateValue: true
       # Supabase (persistent database):
@@ -27,10 +29,31 @@ services:
       # Train tracking:
       - key: INDIAN_RAIL_API_KEY
         sync: false
+      # Flight tracking (Amadeus):
+      - key: AMADEUS_API_KEY
+        sync: false
+      - key: AMADEUS_API_SECRET
+        sync: false
       # Notifications:
       - key: PRICE_MONITOR_NTFY_TOPIC
         sync: false
       - key: PRICE_MONITOR_TELEGRAM_BOT_TOKEN
         sync: false
       - key: PRICE_MONITOR_TELEGRAM_CHAT_ID
+        sync: false
+      # Email (optional):
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: SMTP_FROM
+        sync: false
+      - key: SMTP_TO
+        sync: false
+      # Digest:
+      - key: DIGEST_INTERVAL_HOURS
         sync: false

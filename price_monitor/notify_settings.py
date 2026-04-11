@@ -17,6 +17,12 @@ class NotifySettings:
     callmebot_apikey: str | None
     webhook_url: str | None
     desktop: bool
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_user: str | None = None
+    smtp_pass: str | None = None
+    smtp_from: str | None = None
+    smtp_to: str | None = None
 
     def any_remote(self) -> bool:
         return bool(
@@ -24,6 +30,7 @@ class NotifySettings:
             or (self.telegram_bot_token and self.telegram_chat_id)
             or (self.callmebot_phone and self.callmebot_apikey)
             or self.webhook_url
+            or (self.smtp_host and self.smtp_to)
         )
 
 
@@ -70,6 +77,12 @@ def notify_settings_from_stored_dict(data: dict[str, Any]) -> NotifySettings:
     cb_key = str(data.get("callmebot_apikey") or "").strip() or None
     webhook = str(data.get("webhook_url") or "").strip() or None
     desktop = bool(data.get("desktop", True))
+    smtp_host = str(data.get("smtp_host") or "").strip() or None
+    smtp_port = int(data.get("smtp_port") or 587)
+    smtp_user = str(data.get("smtp_user") or "").strip() or None
+    smtp_pass = str(data.get("smtp_pass") or "").strip() or None
+    smtp_from = str(data.get("smtp_from") or "").strip() or None
+    smtp_to = str(data.get("smtp_to") or "").strip() or None
     return NotifySettings(
         ntfy_topic=ntfy_topic,
         ntfy_server=ntfy_server,
@@ -79,6 +92,12 @@ def notify_settings_from_stored_dict(data: dict[str, Any]) -> NotifySettings:
         callmebot_apikey=cb_key,
         webhook_url=webhook,
         desktop=desktop,
+        smtp_host=smtp_host,
+        smtp_port=smtp_port,
+        smtp_user=smtp_user,
+        smtp_pass=smtp_pass,
+        smtp_from=smtp_from,
+        smtp_to=smtp_to,
     )
 
 
@@ -112,6 +131,13 @@ def load_notify_settings(items_path: Path | None = None) -> NotifySettings:
     else:
         desktop = bool(jget("desktop", True))
 
+    smtp_host = _env("SMTP_HOST") or (str(jget("smtp_host") or "").strip() or None)
+    smtp_port = int(_env("SMTP_PORT") or jget("smtp_port") or 587)
+    smtp_user = _env("SMTP_USER") or (str(jget("smtp_user") or "").strip() or None)
+    smtp_pass = _env("SMTP_PASS") or (str(jget("smtp_pass") or "").strip() or None)
+    smtp_from = _env("SMTP_FROM") or (str(jget("smtp_from") or "").strip() or None)
+    smtp_to = _env("SMTP_TO") or (str(jget("smtp_to") or "").strip() or None)
+
     return NotifySettings(
         ntfy_topic=ntfy_topic,
         ntfy_server=ntfy_server,
@@ -121,4 +147,10 @@ def load_notify_settings(items_path: Path | None = None) -> NotifySettings:
         callmebot_apikey=cb_key,
         webhook_url=webhook,
         desktop=desktop,
+        smtp_host=smtp_host,
+        smtp_port=smtp_port,
+        smtp_user=smtp_user,
+        smtp_pass=smtp_pass,
+        smtp_from=smtp_from,
+        smtp_to=smtp_to,
     )

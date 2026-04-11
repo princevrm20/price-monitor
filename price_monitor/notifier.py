@@ -49,6 +49,26 @@ def _webhook(webhook_url: str, title: str, message: str) -> None:
         r.raise_for_status()
 
 
+def _email_smtp(host: str, port: int, user: str | None, password: str | None,
+                from_addr: str, to_addr: str, title: str, message: str) -> None:
+    import smtplib
+    from email.mime.text import MIMEText
+
+    msg = MIMEText(message, "plain", "utf-8")
+    msg["Subject"] = title
+    msg["From"] = from_addr
+    msg["To"] = to_addr
+
+    with smtplib.SMTP(host, port, timeout=30) as srv:
+        srv.ehlo()
+        if port != 25:
+            srv.starttls()
+            srv.ehlo()
+        if user and password:
+            srv.login(user, password)
+        srv.sendmail(from_addr, [to_addr], msg.as_string())
+
+
 def notify_price_alert(settings: NotifySettings, title: str, message: str) -> bool:
     """Send to all configured channels. Returns True if at least one channel succeeded."""
     errors: list[str] = []
@@ -96,6 +116,18 @@ def notify_price_alert(settings: NotifySettings, title: str, message: str) -> bo
             delivered = True
         except Exception as e:  # noqa: BLE001
             errors.append(f"webhook: {e}")
+
+    if settings.smtp_host and settings.smtp_to:
+        try:
+            _email_smtp(
+                settings.smtp_host, settings.smtp_port,
+                settings.smtp_user, settings.smtp_pass,
+                settings.smtp_from or settings.smtp_user or "pricemonitor@localhost",
+                settings.smtp_to, title, message,
+            )
+            delivered = True
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"email: {e}")
 
     if errors:
         for line in errors:

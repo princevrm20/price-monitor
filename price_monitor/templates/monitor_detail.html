@@ -4,6 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{ mon.name or mon.id[:8] }} - Price Monitor</title>
+<link rel="manifest" href="/static/manifest.json">
+<meta name="theme-color" content="#4f46e5">
 <style>
 :root,[data-theme="light"]{--primary:#4f46e5;--primary-hover:#4338ca;--bg:#f1f5f9;--card:#fff;--text:#1e293b;--muted:#64748b;--border:#e2e8f0;--success:#16a34a;--danger:#dc2626;--warn:#d97706;--radius:10px;--log-bg:#1e293b;--log-fg:#cbd5e1;}
 [data-theme="dark"]{--bg:#0f172a;--card:#1e293b;--text:#e2e8f0;--muted:#94a3b8;--border:#334155;--log-bg:#0f172a;--log-fg:#94a3b8;}
@@ -31,6 +33,9 @@ input:focus,select:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(7
 .si .sv{font-size:1.05rem;font-weight:600;margin-top:.15rem;}
 .badge{display:inline-block;padding:.15rem .55rem;border-radius:999px;font-size:.7rem;font-weight:600;}
 .b-active{background:#dcfce7;color:#166534;}.b-paused{background:#fef3c7;color:#92400e;}.b-completed{background:#dbeafe;color:#1e40af;}.b-expired{background:#f1f5f9;color:var(--muted);}
+.tag{display:inline-block;padding:.1rem .4rem;border-radius:4px;font-size:.65rem;font-weight:500;background:var(--primary);color:#fff;margin:.1rem;}
+.health-dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:5px;vertical-align:middle;}
+.h-ok{background:var(--success);}.h-warn{background:var(--warn);}.h-err{background:var(--danger);}
 .chart-wrap{width:100%;height:200px;position:relative;margin-bottom:1rem;}
 canvas{width:100%!important;height:100%!important;}
 .log{background:var(--log-bg);color:var(--log-fg);padding:.7rem;border-radius:6px;font-family:Consolas,Monaco,monospace;font-size:.76rem;max-height:400px;overflow-y:auto;white-space:pre-wrap;word-break:break-word;}
@@ -41,111 +46,127 @@ details summary::-webkit-details-marker{display:none;}
 details summary::before{content:'\25B6\FE0E ';font-size:.7rem;display:inline-block;transition:transform .2s;margin-right:.4rem;}
 details[open] summary::before{transform:rotate(90deg);}
 details .inner{margin-top:.85rem;}
+.comp-item{display:inline-block;padding:.4rem .7rem;border-radius:6px;background:var(--bg);border:1px solid var(--border);margin:.2rem;font-size:.82rem;}
+.comp-item .cv{font-weight:700;color:var(--primary);}
 @media(max-width:600px){.sg{grid-template-columns:1fr 1fr;}}
 </style>
 </head>
 <body>
 <div class="top-bar">
   <a href="/">&larr; All Monitors</a>
-  <span class="badge b-{{ mon.status }}">{{ mon.status }}</span>
+  <div style="display:flex;gap:.5rem;align-items:center">
+    {% set errs = mon.get('consecutive_errors', 0) %}
+    <span class="health-dot {{ 'h-ok' if errs == 0 else ('h-warn' if errs <= 2 else 'h-err') }}" title="{{ mon.get('last_error_msg','OK') }}"></span>
+    <span class="badge b-{{ mon.status }}">{{ mon.status }}</span>
+  </div>
 </div>
 
 <main>
 <!-- Header -->
 <div class="card">
-  <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:.5rem">
-    <div>
-      <h2 style="margin:0">{{ mon.get('name','') or mon.id[:8] }}</h2>
-      <p style="font-size:.78rem;color:var(--muted)">{{ mon.type|upper }} &middot; Created {{ mon.get('created_at','')[:10] or '—' }} &middot; By {{ mon.get('created_by','admin') }}{% if mon.get('category') %} &middot; {{ mon.category }}{% endif %}</p>
-    </div>
-    <div class="br" style="margin:0">
-      <button class="btn bo" id="btn-check" onclick="doCheck()">Check now</button>
-      {% if mon.status == 'active' %}
-        <button class="btn bw" onclick="doAction('pause')">Pause</button>
-      {% elif mon.status == 'paused' %}
-        <button class="btn bs" onclick="doAction('resume')">Resume</button>
-      {% endif %}
-      <a href="/api/monitors/{{ mon.id }}/export" class="btn bo">Export CSV</a>
-      <button class="btn bd" onclick="doDelete()">Delete</button>
-    </div>
-  </div>
-</div>
-
-<!-- Status -->
-<div class="card">
-  <h2>Current Status</h2>
+  <h2>{{ mon.name or mon.id[:8] }}</h2>
   <div class="sg">
-    {% set lp = mon.get('last_price') %}
-    {% set bg = mon.get('budget') %}
-    {% set lf = mon.get('last_fare') %}
-    {% set la = mon.get('last_availability','') %}
-    {% set lc = mon.get('last_checked_at','') %}
+    <div class="si"><div class="sl">Type</div><div class="sv">{{ mon.type }}</div></div>
+    <div class="si"><div class="sl">Alert Mode</div><div class="sv">{{ mon.get('alert_mode','budget') }}{% if mon.get('alert_drop_percent') %} ({{ mon.alert_drop_percent }}%){% endif %}</div></div>
+
     {% if mon.type == 'product' %}
-    <div class="si"><div class="sl">Last Price</div><div class="sv" id="v-price">{{ '{:g}'.format(lp) if lp is not none else '—' }}</div></div>
-    <div class="si"><div class="sl">Budget</div><div class="sv">{{ '{:g}'.format(bg) if bg is not none else '—' }}</div></div>
-    <div class="si"><div class="sl">Verdict</div><div class="sv" id="v-verdict">
-      {% if lp is not none and bg is not none %}
-        {% if lp <= bg %}<span style="color:var(--success)">At/below budget</span>{% else %}<span style="color:var(--warn)">Above budget</span>{% endif %}
-      {% else %}—{% endif %}
-    </div></div>
-    {% else %}
-    <div class="si"><div class="sl">{{ mon.get('class_code','SL') }} Fare</div><div class="sv" id="v-fare">{{ '{:g}'.format(lf) if lf is not none else '—' }}</div></div>
-    <div class="si"><div class="sl">Availability</div><div class="sv" id="v-avail">{{ la or '—' }}</div></div>
-    <div class="si"><div class="sl">Route</div><div class="sv" style="font-size:.85rem">{{ mon.get('from_station','') }} &rarr; {{ mon.get('to_station','') }}</div></div>
-    <div class="si"><div class="sl">Date</div><div class="sv" style="font-size:.85rem">{{ mon.get('travel_date','—') }}</div></div>
+      {% set lp = mon.get('last_price') %}
+      <div class="si"><div class="sl">Current Price</div><div class="sv">{{ '{:g}'.format(lp) if lp is not none else '—' }}</div></div>
+      <div class="si"><div class="sl">Budget</div><div class="sv">{{ '{:g}'.format(mon.budget) if mon.get('budget') is not none else '—' }}</div></div>
+    {% elif mon.type == 'train' %}
+      {% set lf = mon.get('last_fare') %}
+      {% set la = mon.get('last_availability','') %}
+      <div class="si"><div class="sl">Fare</div><div class="sv">{{ '{:g}'.format(lf) if lf is not none else '—' }}</div></div>
+      <div class="si"><div class="sl">Availability</div><div class="sv">{{ la or '—' }}</div></div>
+      <div class="si"><div class="sl">Route</div><div class="sv">{{ mon.get('from_station','') }} → {{ mon.get('to_station','') }}</div></div>
+    {% elif mon.type == 'flight' %}
+      {% set fp = mon.get('last_flight_price') %}
+      <div class="si"><div class="sl">Lowest Price</div><div class="sv">{{ '{:g}'.format(fp) if fp is not none else '—' }}</div></div>
+      <div class="si"><div class="sl">Route</div><div class="sv">{{ mon.get('flight_origin','') }} → {{ mon.get('flight_destination','') }}</div></div>
+      <div class="si"><div class="sl">Max Price</div><div class="sv">{{ '{:g}'.format(mon.flight_max_price) if mon.get('flight_max_price') is not none else '—' }}</div></div>
     {% endif %}
-    <div class="si"><div class="sl">Last Check</div><div class="sv" id="v-time" style="font-size:.82rem">{{ lc[:19] if lc else '—' }}</div></div>
-    <div class="si"><div class="sl">Interval</div><div class="sv" style="font-size:.85rem">{{ mon.get('check_interval_min',60) }} min</div></div>
+
+    {% set mlc = mon.get('last_checked_at','') %}
+    <div class="si"><div class="sl">Last Check</div><div class="sv" style="font-size:.85rem">{{ mlc[:19] if mlc else '—' }}</div></div>
+    <div class="si"><div class="sl">Interval</div><div class="sv">{{ mon.get('check_interval_min',60) }} min</div></div>
+    <div class="si"><div class="sl">Created</div><div class="sv" style="font-size:.85rem">{{ mon.created_at[:10] if mon.get('created_at') else '—' }}</div></div>
   </div>
+
+  <div style="margin-bottom:.5rem">
+    {% for tag in (mon.get('tags') or []) %}<span class="tag">{{ tag }}</span>{% endfor %}
+    {% if mon.get('category') %}<span class="tag" style="background:var(--muted)">{{ mon.category }}</span>{% endif %}
+  </div>
+
+  {% if mon.get('comparison_group') and comparison %}
+  <div class="card" style="background:var(--bg);border:1px dashed var(--border);margin-top:.5rem">
+    <strong style="font-size:.82rem">Price Comparison ({{ mon.comparison_group }}):</strong><br>
+    {% for c in comparison %}
+    <span class="comp-item">{{ c.name }}: <span class="cv">{{ '{:g}'.format(c.get('last_price') or c.get('last_fare') or c.get('last_flight_price') or 0) }}</span></span>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if role == 'admin' %}
+  <div class="br">
+    <button class="btn bp" onclick="manualCheck()">Check Now</button>
+    {% if mon.status == 'active' %}
+      <button class="btn bw" onclick="pauseThis()">Pause</button>
+    {% elif mon.status == 'paused' %}
+      <button class="btn bs" onclick="resumeThis()">Resume</button>
+    {% endif %}
+    <a class="btn bo" href="/api/monitors/{{ mon.id }}/export">Export CSV</a>
+    <button class="btn bd" onclick="deleteThis()">Delete</button>
+  </div>
+  {% endif %}
 </div>
 
-<!-- Price History Chart -->
+<!-- Chart -->
 {% if price_history %}
 <div class="card">
-  <h2>{{ 'Price' if mon.type == 'product' else 'Fare' }} History</h2>
+  <h2>Price History</h2>
   <div class="chart-wrap"><canvas id="chart"></canvas></div>
 </div>
 {% endif %}
 
-<!-- Edit -->
+<!-- Edit Form -->
+{% if role == 'admin' %}
 <div class="card">
   <details>
     <summary>Edit Monitor</summary>
     <div class="inner">
-      <div class="fg"><label>Name</label><input type="text" id="e-name" value="{{ mon.get('name','') }}"></div>
-      <div class="fg"><label>Category</label><input type="text" id="e-category" value="{{ mon.get('category','') }}"></div>
-      <div class="fg"><label>Check interval (min)</label><input type="number" id="e-interval" value="{{ mon.get('check_interval_min',60) }}" min="1" max="1440"></div>
+      <div class="fg"><label>Name</label><input type="text" id="e-name" value="{{ mon.name or '' }}"></div>
+      <div class="fg"><label>Tags (comma separated)</label><input type="text" id="e-tags" value="{{ (mon.get('tags') or [])|join(', ') }}"></div>
+      <div class="fg"><label>Category</label><input type="text" id="e-category" value="{{ mon.category or '' }}"></div>
+      <div class="fg"><label>Check interval (min)</label><input type="number" id="e-interval" value="{{ mon.get('check_interval_min',60) }}"></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem">
+        <div class="fg"><label>Alert Mode</label><select id="e-alert-mode"><option value="budget" {{ 'selected' if mon.get('alert_mode','budget')=='budget' }}>Budget</option><option value="drop_percent" {{ 'selected' if mon.get('alert_mode')=='drop_percent' }}>Drop %</option><option value="any_change" {{ 'selected' if mon.get('alert_mode')=='any_change' }}>Any change</option></select></div>
+        <div class="fg"><label>Drop %</label><input type="number" id="e-drop-pct" value="{{ mon.get('alert_drop_percent') or 10 }}"></div>
+      </div>
+      <div class="fg"><label>Comparison Group</label><input type="text" id="e-comp-group" value="{{ mon.get('comparison_group','') }}"></div>
       {% if mon.type == 'product' %}
-      <div class="fg"><label>URL</label><input type="url" id="e-url" value="{{ mon.get('url','') }}"></div>
-      <div class="fg"><label>Budget</label><input type="text" id="e-budget" value="{{ '{:g}'.format(bg) if bg is not none else '' }}"></div>
-      <div class="fg"><label>CSS selector</label><input type="text" id="e-selector" value="{{ mon.get('price_selector','') }}"></div>
-      <div class="fg"><label>Monitor until</label><input type="text" id="e-until" value="{{ mon.get('monitor_until','') }}"></div>
-      {% else %}
-      {% set fb = mon.get('fare_budget') %}
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem">
+        <div class="fg"><label>URL</label><input type="url" id="e-url" value="{{ mon.get('url','') }}"></div>
+        <div class="fg"><label>Budget</label><input type="text" id="e-budget" value="{{ mon.get('budget','') }}"></div>
+        <div class="fg"><label>CSS selector</label><input type="text" id="e-selector" value="{{ mon.get('price_selector','') }}"></div>
+      {% elif mon.type == 'train' %}
         <div class="fg"><label>Train number</label><input type="text" id="e-tnum" value="{{ mon.get('train_number','') }}"></div>
-        <div class="fg"><label>Train name</label><input type="text" id="e-tname" value="{{ mon.get('train_name','') }}"></div>
-      </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem">
-        <div class="fg"><label>From</label><input type="text" id="e-from" value="{{ mon.get('from_station','') }}"></div>
-        <div class="fg"><label>To</label><input type="text" id="e-to" value="{{ mon.get('to_station','') }}"></div>
-      </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:.5rem">
-        <div class="fg"><label>Date</label><input type="text" id="e-date" value="{{ mon.get('travel_date','') }}"></div>
-        <div class="fg"><label>Class</label><input type="text" id="e-class" value="{{ mon.get('class_code','SL') }}"></div>
-        <div class="fg"><label>Quota</label><input type="text" id="e-quota" value="{{ mon.get('quota','GN') }}"></div>
-      </div>
-      <div class="fg"><label>Fare budget</label><input type="text" id="e-fbudget" value="{{ '{:g}'.format(fb) if fb is not none else '' }}"></div>
+        <div class="fg"><label>Travel date</label><input type="text" id="e-date" value="{{ mon.get('travel_date','') }}"></div>
+        <div class="fg"><label>Fare budget</label><input type="text" id="e-fbudget" value="{{ mon.get('fare_budget','') }}"></div>
+      {% elif mon.type == 'flight' %}
+        <div class="fg"><label>Origin</label><input type="text" id="e-forigin" value="{{ mon.get('flight_origin','') }}"></div>
+        <div class="fg"><label>Destination</label><input type="text" id="e-fdest" value="{{ mon.get('flight_destination','') }}"></div>
+        <div class="fg"><label>Date</label><input type="text" id="e-fdate" value="{{ mon.get('flight_date','') }}"></div>
+        <div class="fg"><label>Max price</label><input type="text" id="e-fmaxprice" value="{{ mon.get('flight_max_price','') }}"></div>
       {% endif %}
-      <div class="br"><button class="btn bp" onclick="saveEdit()">Save changes</button></div>
+      <div class="br"><button class="btn bp" onclick="saveEdit()">Save</button></div>
     </div>
   </details>
 </div>
+{% endif %}
 
-<!-- Event History -->
+<!-- Event Log -->
 <div class="card">
-  <h2>Event History</h2>
-  <div class="log" id="events">{% for e in events %}[{{ e.created_at[:19] }}] {{ e.event_type }}: {{ e.details|tojson }}
+  <h2>Event Log</h2>
+  <div class="log">{% for e in events %}[{{ e.created_at[:19] }}] {{ e.event_type }}: {{ e.details|tojson }}
 {% endfor %}{% if not events %}No events yet.{% endif %}</div>
 </div>
 </main>
@@ -153,43 +174,33 @@ details .inner{margin-top:.85rem;}
 <div class="toast" id="toast"></div>
 
 <script>
-const MID='{{ mon.id }}';
-const MTYPE='{{ mon.type }}';
 const $=id=>document.getElementById(id);
+const MID='{{ mon.id }}';
 function toast(m,ok=true){const t=$('toast');t.textContent=m;t.className='toast '+(ok?'toast-ok':'toast-err')+' show';clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),3500);}
+async function api(url,body){const opts=body!==undefined?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{};if(body===null)opts.method='DELETE';const r=await fetch(url,opts);return r.json();}
 
 (function(){const t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t);})();
 
-async function doCheck(){
-  const b=$('btn-check');b.disabled=true;b.textContent='Checking...';
-  try{const r=await(await fetch('/api/monitors/'+MID+'/check',{method:'POST'})).json();
-    if(r.ok){toast('Check complete');location.reload();}else toast(r.error||'Failed',false);
-  }catch(e){toast('Error',false);}
-  b.disabled=false;b.textContent='Check now';
-}
-
-async function doAction(act){
-  await fetch('/api/monitors/'+MID+'/'+act,{method:'POST'});
-  toast(act==='pause'?'Paused':'Resumed');
-  location.reload();
-}
-
-async function doDelete(){
-  if(!confirm('Delete this monitor permanently?'))return;
-  await fetch('/api/monitors/'+MID,{method:'DELETE'});
-  toast('Deleted');
-  window.location='/';
-}
+async function manualCheck(){const r=await api('/api/monitors/'+MID+'/check',{});toast(r.ok?'Check complete':'Failed: '+(r.error||''),r.ok);if(r.ok)setTimeout(()=>location.reload(),1000);}
+async function pauseThis(){await fetch('/api/monitors/'+MID+'/pause',{method:'POST'});location.reload();}
+async function resumeThis(){await fetch('/api/monitors/'+MID+'/resume',{method:'POST'});location.reload();}
+async function deleteThis(){if(!confirm('Delete this monitor?'))return;await fetch('/api/monitors/'+MID,{method:'DELETE'});window.location='/';}
 
 async function saveEdit(){
-  const d={name:$('e-name').value,category:$('e-category').value,check_interval_min:parseInt($('e-interval').value)||60};
-  if(MTYPE==='product'){Object.assign(d,{url:$('e-url').value,budget:parseFloat($('e-budget').value)||0,price_selector:$('e-selector').value,monitor_until:$('e-until').value});}
-  else{Object.assign(d,{train_number:$('e-tnum').value,train_name:$('e-tname').value,from_station:$('e-from').value,to_station:$('e-to').value,travel_date:$('e-date').value,class_code:$('e-class').value,quota:$('e-quota').value,fare_budget:parseFloat($('e-fbudget').value)||null});}
-  const r=await(await fetch('/api/monitors/'+MID,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)})).json();
-  r.ok?toast('Saved'):toast(r.error||'Failed',false);
+  const d={name:$('e-name').value,tags:$('e-tags').value,category:$('e-category').value,check_interval_min:parseInt($('e-interval').value)||60,alert_mode:$('e-alert-mode').value,alert_drop_percent:parseFloat($('e-drop-pct').value)||null,comparison_group:$('e-comp-group').value};
+  {% if mon.type == 'product' %}
+  d.url=$('e-url').value;d.budget=parseFloat($('e-budget').value)||null;d.price_selector=$('e-selector').value;
+  {% elif mon.type == 'train' %}
+  d.train_number=$('e-tnum').value;d.travel_date=$('e-date').value;d.fare_budget=parseFloat($('e-fbudget').value)||null;
+  {% elif mon.type == 'flight' %}
+  d.flight_origin=$('e-forigin').value;d.flight_destination=$('e-fdest').value;d.flight_date=$('e-fdate').value;d.flight_max_price=parseFloat($('e-fmaxprice').value)||null;
+  {% endif %}
+  const r=await fetch('/api/monitors/'+MID,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)});
+  const j=await r.json();
+  toast(j.ok?'Saved':'Failed',j.ok);
+  if(j.ok)setTimeout(()=>location.reload(),800);
 }
 
-/* Chart */
 {% if price_history %}
 const DATA={{ price_history|tojson }};
 (function(){

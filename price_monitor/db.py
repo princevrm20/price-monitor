@@ -73,7 +73,16 @@ def create_monitor(mon: dict) -> dict:
     mon.setdefault("created_at", _now_iso())
     mon.setdefault("created_by", "admin")
     mon.setdefault("category", "")
+    mon.setdefault("tags", [])
     mon.setdefault("check_interval_min", 60)
+    mon.setdefault("alert_mode", "budget")
+    mon.setdefault("alert_drop_percent", None)
+    mon.setdefault("highest_price", None)
+    mon.setdefault("highest_fare", None)
+    mon.setdefault("consecutive_errors", 0)
+    mon.setdefault("last_error_at", None)
+    mon.setdefault("last_error_msg", None)
+    mon.setdefault("comparison_group", "")
 
     sb = _get_supabase()
     if sb:
@@ -103,6 +112,8 @@ def list_monitors(
     status: str | None = None,
     monitor_type: str | None = None,
     category: str | None = None,
+    tag: str | None = None,
+    comparison_group: str | None = None,
 ) -> list[dict]:
     sb = _get_supabase()
     if sb:
@@ -113,6 +124,10 @@ def list_monitors(
             q = q.eq("type", monitor_type)
         if category:
             q = q.eq("category", category)
+        if tag:
+            q = q.contains("tags", [tag])
+        if comparison_group:
+            q = q.eq("comparison_group", comparison_group)
         return q.execute().data
 
     all_m = _read_json("monitors.json")
@@ -122,6 +137,10 @@ def list_monitors(
         all_m = [m for m in all_m if m.get("type") == monitor_type]
     if category:
         all_m = [m for m in all_m if m.get("category") == category]
+    if tag:
+        all_m = [m for m in all_m if tag in (m.get("tags") or [])]
+    if comparison_group:
+        all_m = [m for m in all_m if m.get("comparison_group") == comparison_group]
     all_m.sort(key=lambda m: m.get("created_at", ""), reverse=True)
     return all_m
 
@@ -217,6 +236,60 @@ def get_recent_events(limit: int = 50) -> list[dict]:
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# AUDIT LOG
+# ═══════════════════════════════════════════════════════════════════════
+
+def add_audit(action: str, target_type: str, target_id: str,
+              target_name: str = "", user_role: str = "admin",
+              details: dict | None = None) -> dict:
+    entry = {
+        "id": str(uuid.uuid4()),
+        "action": action,
+        "target_type": target_type,
+        "target_id": target_id,
+        "target_name": target_name,
+        "user_role": user_role,
+        "details": details or {},
+        "created_at": _now_iso(),
+    }
+    sb = _get_supabase()
+    if sb:
+        resp = sb.table("audit_log").insert(entry).execute()
+        return resp.data[0]
+
+    all_a = _read_json("audit_log.json")
+    all_a.append(entry)
+    if len(all_a) > 2000:
+        all_a = all_a[-2000:]
+    _write_json("audit_log.json", all_a)
+    return entry
+
+
+def get_audit_log(
+    *,
+    limit: int = 100,
+    action: str | None = None,
+    target_id: str | None = None,
+) -> list[dict]:
+    sb = _get_supabase()
+    if sb:
+        q = sb.table("audit_log").select("*").order("created_at", desc=True).limit(limit)
+        if action:
+            q = q.eq("action", action)
+        if target_id:
+            q = q.eq("target_id", target_id)
+        return q.execute().data
+
+    all_a = _read_json("audit_log.json")
+    if action:
+        all_a = [a for a in all_a if a.get("action") == action]
+    if target_id:
+        all_a = [a for a in all_a if a.get("target_id") == target_id]
+    all_a.sort(key=lambda a: a.get("created_at", ""), reverse=True)
+    return all_a[:limit]
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # SETTINGS (notification config)
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -256,9 +329,24 @@ CREATE TABLE IF NOT EXISTS monitors (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     created_by TEXT NOT NULL DEFAULT 'admin',
     category TEXT NOT NULL DEFAULT '',
+    tags JSONB NOT NULL DEFAULT '[]',
     check_interval_min INTEGER NOT NULL DEFAULT 60,
     last_checked_at TIMESTAMPTZ,
     next_check_at TIMESTAMPTZ,
+
+    -- alert settings
+    alert_mode TEXT NOT NULL DEFAULT 'budget',
+    alert_drop_percent DOUBLE PRECISION,
+    highest_price DOUBLE PRECISION,
+    highest_fare DOUBLE PRECISION,
+
+    -- health tracking
+    consecutive_errors INTEGER NOT NULL DEFAULT 0,
+    last_error_at TIMESTAMPTZ,
+    last_error_msg TEXT,
+
+    -- comparison
+    comparison_group TEXT NOT NULL DEFAULT '',
 
     -- product fields
     url TEXT,
@@ -279,6 +367,15 @@ CREATE TABLE IF NOT EXISTS monitors (
     last_fare DOUBLE PRECISION,
     last_availability TEXT,
 
+    -- flight fields
+    flight_origin TEXT,
+    flight_destination TEXT,
+    flight_date TEXT,
+    flight_return_date TEXT,
+    flight_max_price DOUBLE PRECISION,
+    flight_airline_pref TEXT,
+    last_flight_price DOUBLE PRECISION,
+
     -- notification dedup
     notified_budget BOOLEAN NOT NULL DEFAULT FALSE,
     notified_available BOOLEAN NOT NULL DEFAULT FALSE
@@ -297,4 +394,49 @@ CREATE TABLE IF NOT EXISTS settings (
     id TEXT PRIMARY KEY,
     config JSONB NOT NULL DEFAULT '{}'
 );
+
+CREATE TABLE IF NOT EXISTS audit_log (
+    id TEXT PRIMARY KEY,
+    action TEXT NOT NULL,
+    target_type TEXT NOT NULL DEFAULT '',
+    target_id TEXT NOT NULL DEFAULT '',
+    target_name TEXT NOT NULL DEFAULT '',
+    user_role TEXT NOT NULL DEFAULT 'admin',
+    details JSONB NOT NULL DEFAULT '{}',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at DESC);
+"""
+
+SUPABASE_MIGRATION_SQL = """
+-- Run this to add new columns to an EXISTING monitors table.
+
+ALTER TABLE monitors ADD COLUMN IF NOT EXISTS tags JSONB NOT NULL DEFAULT '[]';
+ALTER TABLE monitors ADD COLUMN IF NOT EXISTS alert_mode TEXT NOT NULL DEFAULT 'budget';
+ALTER TABLE monitors ADD COLUMN IF NOT EXISTS alert_drop_percent DOUBLE PRECISION;
+ALTER TABLE monitors ADD COLUMN IF NOT EXISTS highest_price DOUBLE PRECISION;
+ALTER TABLE monitors ADD COLUMN IF NOT EXISTS highest_fare DOUBLE PRECISION;
+ALTER TABLE monitors ADD COLUMN IF NOT EXISTS consecutive_errors INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE monitors ADD COLUMN IF NOT EXISTS last_error_at TIMESTAMPTZ;
+ALTER TABLE monitors ADD COLUMN IF NOT EXISTS last_error_msg TEXT;
+ALTER TABLE monitors ADD COLUMN IF NOT EXISTS comparison_group TEXT NOT NULL DEFAULT '';
+ALTER TABLE monitors ADD COLUMN IF NOT EXISTS flight_origin TEXT;
+ALTER TABLE monitors ADD COLUMN IF NOT EXISTS flight_destination TEXT;
+ALTER TABLE monitors ADD COLUMN IF NOT EXISTS flight_date TEXT;
+ALTER TABLE monitors ADD COLUMN IF NOT EXISTS flight_return_date TEXT;
+ALTER TABLE monitors ADD COLUMN IF NOT EXISTS flight_max_price DOUBLE PRECISION;
+ALTER TABLE monitors ADD COLUMN IF NOT EXISTS flight_airline_pref TEXT;
+ALTER TABLE monitors ADD COLUMN IF NOT EXISTS last_flight_price DOUBLE PRECISION;
+
+CREATE TABLE IF NOT EXISTS audit_log (
+    id TEXT PRIMARY KEY,
+    action TEXT NOT NULL,
+    target_type TEXT NOT NULL DEFAULT '',
+    target_id TEXT NOT NULL DEFAULT '',
+    target_name TEXT NOT NULL DEFAULT '',
+    user_role TEXT NOT NULL DEFAULT 'admin',
+    details JSONB NOT NULL DEFAULT '{}',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at DESC);
 """
