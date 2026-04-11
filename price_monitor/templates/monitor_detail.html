@@ -73,12 +73,6 @@ details .inner{margin-top:.85rem;}
       {% set lp = mon.get('last_price') %}
       <div class="si"><div class="sl">Current Price</div><div class="sv">{{ '{:g}'.format(lp) if lp is not none else '—' }}</div></div>
       <div class="si"><div class="sl">Budget</div><div class="sv">{{ '{:g}'.format(mon.budget) if mon.get('budget') is not none else '—' }}</div></div>
-    {% elif mon.type == 'train' %}
-      {% set lf = mon.get('last_fare') %}
-      {% set la = mon.get('last_availability','') %}
-      <div class="si"><div class="sl">Fare</div><div class="sv">{{ '{:g}'.format(lf) if lf is not none else '—' }}</div></div>
-      <div class="si"><div class="sl">Availability</div><div class="sv">{{ la or '—' }}</div></div>
-      <div class="si"><div class="sl">Route</div><div class="sv">{{ mon.get('from_station','') }} → {{ mon.get('to_station','') }}</div></div>
     {% elif mon.type == 'flight' %}
       {% set fp = mon.get('last_flight_price') %}
       <div class="si"><div class="sl">Lowest Price</div><div class="sv">{{ '{:g}'.format(fp) if fp is not none else '—' }}</div></div>
@@ -102,7 +96,7 @@ details .inner{margin-top:.85rem;}
   <div class="card" style="background:var(--bg);border:1px dashed var(--border);margin-top:.5rem">
     <strong style="font-size:.82rem">Price Comparison ({{ mon.comparison_group }}):</strong><br>
     {% for c in comparison %}
-    <span class="comp-item">{{ c.name }}: <span class="cv">{{ '{:g}'.format(c.get('last_price') or c.get('last_fare') or c.get('last_flight_price') or 0) }}</span></span>
+    <span class="comp-item">{{ c.name }}: <span class="cv">{{ '{:g}'.format(c.get('last_price') or c.get('last_flight_price') or 0) }}</span></span>
     {% endfor %}
   </div>
   {% endif %}
@@ -148,11 +142,6 @@ details .inner{margin-top:.85rem;}
       {% if mon.type == 'product' %}
         <div class="fg"><label>URL</label><input type="url" id="e-url" value="{{ mon.get('url','') }}"></div>
         <div class="fg"><label>Budget</label><input type="text" id="e-budget" value="{{ mon.get('budget','') }}"></div>
-        <div class="fg"><label>CSS selector</label><input type="text" id="e-selector" value="{{ mon.get('price_selector','') }}"></div>
-      {% elif mon.type == 'train' %}
-        <div class="fg"><label>Train number</label><input type="text" id="e-tnum" value="{{ mon.get('train_number','') }}"></div>
-        <div class="fg"><label>Travel date</label><input type="text" id="e-date" value="{{ mon.get('travel_date','') }}"></div>
-        <div class="fg"><label>Fare budget</label><input type="text" id="e-fbudget" value="{{ mon.get('fare_budget','') }}"></div>
       {% elif mon.type == 'flight' %}
         <div class="fg"><label>Origin</label><input type="text" id="e-forigin" value="{{ mon.get('flight_origin','') }}"></div>
         <div class="fg"><label>Destination</label><input type="text" id="e-fdest" value="{{ mon.get('flight_destination','') }}"></div>
@@ -191,9 +180,7 @@ async function deleteThis(){if(!confirm('Delete this monitor?'))return;await fet
 async function saveEdit(){
   const d={name:$('e-name').value,created_by:$('e-created-by').value,tags:$('e-tags').value,category:$('e-category').value,check_interval_min:parseInt($('e-interval').value)||60,alert_mode:$('e-alert-mode').value,alert_drop_percent:parseFloat($('e-drop-pct').value)||null,comparison_group:$('e-comp-group').value};
   {% if mon.type == 'product' %}
-  d.url=$('e-url').value;d.budget=parseFloat($('e-budget').value)||null;d.price_selector=$('e-selector').value;
-  {% elif mon.type == 'train' %}
-  d.train_number=$('e-tnum').value;d.travel_date=$('e-date').value;d.fare_budget=parseFloat($('e-fbudget').value)||null;
+  d.url=$('e-url').value;d.budget=parseFloat($('e-budget').value)||null;
   {% elif mon.type == 'flight' %}
   d.flight_origin=$('e-forigin').value;d.flight_destination=$('e-fdest').value;d.flight_date=$('e-fdate').value;d.flight_max_price=parseFloat($('e-fmaxprice').value)||null;
   {% endif %}

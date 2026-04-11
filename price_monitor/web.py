@@ -3,6 +3,8 @@ from __future__ import annotations
 import csv
 import io
 import json
+import logging
+import logging.handlers
 import os
 import queue
 import secrets
@@ -11,16 +13,51 @@ import time
 from collections import deque
 from datetime import datetime, timezone
 from functools import wraps
+from pathlib import Path
 
 from flask import (
     Flask, Response, jsonify, redirect, render_template, request, session, url_for,
 )
 
 from price_monitor.db import (
-    add_audit, add_event, create_monitor, delete_monitor, get_audit_log,
-    get_events, get_monitor, get_recent_events, get_settings, list_monitors,
-    save_settings, update_monitor,
+    add_audit, add_event, count_users, create_monitor, create_user,
+    create_delete_request, delete_monitor, delete_user, get_audit_log,
+    get_delete_request, get_events, get_monitor, get_recent_events,
+    get_settings, get_user_by_username, list_delete_requests, list_monitors,
+    list_users, save_settings, update_delete_request, update_monitor,
+    update_user, verify_user,
 )
+
+# ═══════════════════════════════════════════════════════════════════════
+# FILE-BASED LOGGING
+# ═══════════════════════════════════════════════════════════════════════
+
+def _setup_logging() -> logging.Logger:
+    env_dir = os.environ.get("PRICE_MONITOR_DATA_DIR", "").strip()
+    log_dir = Path(env_dir) if env_dir else (Path(__file__).resolve().parent.parent / "data")
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / "price_monitor.log"
+
+    logger = logging.getLogger("price_monitor")
+    logger.setLevel(logging.DEBUG)
+
+    if not logger.handlers:
+        fh = logging.handlers.RotatingFileHandler(
+            log_file, maxBytes=2 * 1024 * 1024, backupCount=3, encoding="utf-8",
+        )
+        fh.setLevel(logging.DEBUG)
+        fmt = logging.Formatter(
+            "%(asctime)s | %(levelname)-7s | %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
+        fh.setFormatter(fmt)
+        logger.addHandler(fh)
+
+    return logger
+
+
+_logger = _setup_logging()
+
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", secrets.token_hex(32))
@@ -35,11 +72,12 @@ _sse_listeners: list[queue.Queue] = []
 _sse_lock = threading.Lock()
 
 
-def _add_log(msg: str) -> None:
+def _add_log(msg: str, level: str = "info") -> None:
     ts = datetime.now(timezone.utc).strftime("%H:%M:%S UTC")
     entry = f"[{ts}] {msg}"
     _global_log.appendleft(entry)
     _sse_broadcast({"type": "log", "message": entry})
+    getattr(_logger, level, _logger.info)(msg)
 
 
 def _sse_broadcast(data: dict) -> None:
@@ -55,26 +93,48 @@ def _sse_broadcast(data: dict) -> None:
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# AUTH (admin / viewer roles)
+# AUTH (fixed admin + user registration)
 # ═══════════════════════════════════════════════════════════════════════
 
-def _admin_password() -> str | None:
-    return os.environ.get("ADMIN_PASSWORD", "").strip() or None
+_ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME", "admin").strip()
+_ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "admin123").strip()
 
 
-def _viewer_password() -> str | None:
-    return os.environ.get("VIEWER_PASSWORD", "").strip() or None
+def _ensure_admin_exists() -> None:
+    """Create the fixed admin account on first startup if it doesn't exist."""
+    existing = get_user_by_username(_ADMIN_USERNAME)
+    if existing:
+        return
+    create_user({
+        "username": _ADMIN_USERNAME,
+        "password": _ADMIN_PASSWORD,
+        "role": "admin",
+    })
+    _logger.info("STARTUP     | Admin account '%s' created", _ADMIN_USERNAME)
 
 
 def _session_role() -> str | None:
     return session.get("role")
 
 
+def _validate_session():
+    """Check the session user still exists and sync role from DB."""
+    if not session.get("authed"):
+        return False
+    user = get_user_by_username(session.get("username", ""))
+    if not user:
+        session.clear()
+        return False
+    if user.get("role") != session.get("role"):
+        session["role"] = user["role"]
+    return True
+
+
 def require_auth(f):
-    """Allow any authenticated role."""
+    """Allow any authenticated user."""
     @wraps(f)
     def wrapped(*args, **kwargs):
-        if _admin_password() and not session.get("authed"):
+        if not _validate_session():
             if request.is_json or request.path.startswith("/api/"):
                 return jsonify(ok=False, error="Not authenticated"), 401
             return redirect(url_for("login_page"))
@@ -86,11 +146,11 @@ def require_admin(f):
     """Only allow admin role."""
     @wraps(f)
     def wrapped(*args, **kwargs):
-        if _admin_password() and not session.get("authed"):
+        if not _validate_session():
             if request.is_json or request.path.startswith("/api/"):
                 return jsonify(ok=False, error="Not authenticated"), 401
             return redirect(url_for("login_page"))
-        if session.get("role") == "viewer":
+        if session.get("role") != "admin":
             if request.is_json or request.path.startswith("/api/"):
                 return jsonify(ok=False, error="Admin access required"), 403
             return "Forbidden", 403
@@ -98,21 +158,73 @@ def require_admin(f):
     return wrapped
 
 
+def _can_access_monitor(mon: dict) -> bool:
+    """Check if current user owns the monitor or is admin."""
+    if session.get("role") == "admin":
+        return True
+    return mon.get("created_by", "") == session.get("username", "")
+
+
 @app.route("/login", methods=["GET", "POST"])
 def login_page():
     error = None
+    registered = request.args.get("registered") == "1"
     if request.method == "POST":
-        pw = request.form.get("password", "")
-        if pw and pw == _admin_password():
-            session["authed"] = True
-            session["role"] = "admin"
-            return redirect(url_for("admin_dashboard"))
-        elif pw and _viewer_password() and pw == _viewer_password():
-            session["authed"] = True
-            session["role"] = "viewer"
-            return redirect(url_for("admin_dashboard"))
-        error = "Wrong password"
-    return render_template("login.html", error=error)
+        username = (request.form.get("username") or "").strip()
+        password = request.form.get("password", "")
+        if not username or not password:
+            error = "Username and password are required"
+        else:
+            user = verify_user(username, password)
+            if user:
+                session["authed"] = True
+                session["role"] = user["role"]
+                session["username"] = user["username"]
+                session["user_id"] = user["id"]
+                _logger.info("LOGIN OK    | user=%s role=%s ip=%s", username, user["role"], request.remote_addr)
+                return redirect(url_for("admin_dashboard"))
+            else:
+                _logger.warning("LOGIN FAIL  | user=%s ip=%s", username, request.remote_addr)
+                error = "Invalid username or password"
+    return render_template("login.html", error=error, registered=registered)
+
+
+@app.route("/register", methods=["GET", "POST"])
+def register_page():
+    error = None
+    success = None
+    if request.method == "POST":
+        username = (request.form.get("username") or "").strip().lower()
+        password = request.form.get("password", "")
+        confirm = request.form.get("confirm_password", "")
+
+        if not username or not password:
+            error = "Username and password are required"
+        elif len(username) < 10:
+            error = "Username must be at least 10 characters"
+        elif len(username) > 30:
+            error = "Username must be at most 30 characters"
+        elif not username.replace("_", "").replace("@", "").isalnum():
+            error = "Username can only contain letters, numbers, underscores, and @"
+        elif len(password) < 8:
+            error = "Password must be at least 8 characters"
+        elif password != confirm:
+            error = "Passwords do not match"
+        elif username == _ADMIN_USERNAME.lower():
+            error = "This username is reserved"
+        elif get_user_by_username(username):
+            error = "Username already taken"
+        else:
+            create_user({
+                "username": username,
+                "password": password,
+                "role": "viewer",
+            })
+            add_audit("register", "user", "", username, "viewer")
+            _logger.info("REGISTER    | user=%s ip=%s", username, request.remote_addr)
+            return redirect(url_for("login_page", registered="1"))
+
+    return render_template("register.html", error=error)
 
 
 @app.route("/logout")
@@ -128,19 +240,35 @@ def logout():
 @app.route("/")
 @require_auth
 def admin_dashboard():
+    role = session.get("role", "viewer")
+    username = session.get("username", "")
+    is_admin = role == "admin"
+
     filt_type = request.args.get("type", "")
     filt_status = request.args.get("status", "")
     filt_category = request.args.get("category", "")
     filt_tag = request.args.get("tag", "")
     filt_creator = request.args.get("creator", "")
-    monitors = list_monitors(
-        monitor_type=filt_type or None,
-        status=filt_status or None,
-        category=filt_category or None,
-        tag=filt_tag or None,
-        created_by=filt_creator or None,
-    )
-    all_monitors = list_monitors()
+
+    if is_admin:
+        monitors = list_monitors(
+            monitor_type=filt_type or None,
+            status=filt_status or None,
+            category=filt_category or None,
+            tag=filt_tag or None,
+            created_by=filt_creator or None,
+        )
+        all_monitors = list_monitors()
+    else:
+        monitors = list_monitors(
+            monitor_type=filt_type or None,
+            status=filt_status or None,
+            category=filt_category or None,
+            tag=filt_tag or None,
+            created_by=username,
+        )
+        all_monitors = list_monitors(created_by=username)
+
     categories = sorted({m.get("category", "") for m in all_monitors if m.get("category")})
     creators = sorted({m.get("created_by", "") for m in all_monitors if m.get("created_by")})
     all_tags: set[str] = set()
@@ -148,7 +276,7 @@ def admin_dashboard():
         for t in (m.get("tags") or []):
             if t:
                 all_tags.add(t)
-    recent_audit = get_audit_log(limit=30)
+    recent_audit = get_audit_log(limit=30) if is_admin else []
     return render_template(
         "admin.html",
         monitors=monitors,
@@ -161,8 +289,10 @@ def admin_dashboard():
         filt_category=filt_category,
         filt_tag=filt_tag,
         filt_creator=filt_creator,
-        logs=list(_global_log),
-        role=session.get("role", "admin"),
+        logs=list(_global_log) if is_admin else [],
+        role=role,
+        username=username,
+        primary_admin=_ADMIN_USERNAME,
         audit_entries=recent_audit,
     )
 
@@ -173,8 +303,10 @@ def monitor_detail_page(monitor_id):
     mon = get_monitor(monitor_id)
     if not mon:
         return "Not found", 404
+    if session.get("role") != "admin" and mon.get("created_by", "") != session.get("username", ""):
+        return "Access denied", 403
     events = get_events(monitor_id, limit=200)
-    price_key = "price" if mon.get("type") == "product" else ("fare" if mon.get("type") == "train" else "flight_price")
+    price_key = "price" if mon.get("type") == "product" else "flight_price"
     price_history = [
         {"t": e["created_at"], "v": e["details"].get("price") or e["details"].get("fare") or e["details"].get("flight_price")}
         for e in reversed(events)
@@ -196,6 +328,7 @@ def monitor_detail_page(monitor_id):
         monitoring=_monitor_running,
         comparison=comparison,
         role=session.get("role", "admin"),
+        username=session.get("username", ""),
     )
 
 
@@ -215,7 +348,7 @@ def api_list_monitors():
 
 
 @app.route("/api/monitors", methods=["POST"])
-@require_admin
+@require_auth
 def api_create_monitor():
     data = request.get_json(force=True)
     mtype = data.get("type", "product")
@@ -225,7 +358,7 @@ def api_create_monitor():
         "name": (data.get("name") or "").strip(),
         "category": (data.get("category") or "").strip(),
         "tags": _parse_tags(data.get("tags")),
-        "created_by": (data.get("created_by") or "admin").strip(),
+        "created_by": (data.get("created_by") or session.get("username") or "admin").strip(),
         "check_interval_min": int(data.get("check_interval_min", 60)),
         "status": "active",
         "alert_mode": data.get("alert_mode", "budget"),
@@ -248,26 +381,6 @@ def api_create_monitor():
             "price_selector": (data.get("price_selector") or "").strip() or None,
             "monitor_until": (data.get("monitor_until") or "").strip() or None,
         })
-    elif mtype == "train":
-        train_num = (data.get("train_number") or "").strip()
-        from_st = (data.get("from_station") or "").strip().upper()
-        to_st = (data.get("to_station") or "").strip().upper()
-        travel_date = (data.get("travel_date") or "").strip()
-        if not train_num or not from_st or not to_st or not travel_date:
-            return jsonify(ok=False, error="Train number, stations, and date are required"), 400
-        fare_budget = _safe_float(data.get("fare_budget"))
-        mon.update({
-            "train_number": train_num,
-            "train_name": (data.get("train_name") or "").strip(),
-            "from_station": from_st,
-            "to_station": to_st,
-            "travel_date": travel_date,
-            "class_code": (data.get("class_code") or "SL").strip().upper(),
-            "quota": (data.get("quota") or "GN").strip().upper(),
-            "fare_budget": fare_budget,
-        })
-        if not mon["name"]:
-            mon["name"] = f"{train_num} {from_st}-{to_st}"
     elif mtype == "flight":
         origin = (data.get("flight_origin") or "").strip().upper()
         dest = (data.get("flight_destination") or "").strip().upper()
@@ -285,11 +398,11 @@ def api_create_monitor():
         if not mon["name"]:
             mon["name"] = f"Flight {origin}-{dest}"
     else:
-        return jsonify(ok=False, error="type must be 'product', 'train', or 'flight'"), 400
+        return jsonify(ok=False, error="type must be 'product' or 'flight'"), 400
 
     created = create_monitor(mon)
     add_event(created["id"], "status_change", {"status": "active", "action": "created"})
-    add_audit("create", "monitor", created["id"], created.get("name", ""), session.get("role", "admin"))
+    add_audit("create", "monitor", created["id"], created.get("name", ""), session.get("username", "system"))
     _add_log(f"Monitor created: {created.get('name', created['id'])}")
     return jsonify(ok=True, monitor=created), 201
 
@@ -321,17 +434,22 @@ def api_get_monitor(monitor_id):
 
 
 @app.route("/api/monitors/<monitor_id>", methods=["PUT"])
-@require_admin
+@require_auth
 def api_update_monitor(monitor_id):
+    mon = get_monitor(monitor_id)
+    if not mon:
+        return jsonify(ok=False, error="Not found"), 404
+    if not _can_access_monitor(mon):
+        return jsonify(ok=False, error="Access denied"), 403
     data = request.get_json(force=True)
     safe_keys = {
-        "name", "category", "tags", "created_by", "check_interval_min", "url", "budget",
-        "price_selector", "monitor_until", "train_number", "train_name",
-        "from_station", "to_station", "travel_date", "class_code", "quota",
-        "fare_budget", "alert_mode", "alert_drop_percent", "comparison_group",
-        "flight_origin", "flight_destination", "flight_date", "flight_return_date",
-        "flight_max_price", "flight_airline_pref",
+        "name", "category", "tags", "check_interval_min", "url", "budget",
+        "price_selector", "monitor_until", "alert_mode", "alert_drop_percent",
+        "comparison_group", "flight_origin", "flight_destination", "flight_date",
+        "flight_return_date", "flight_max_price", "flight_airline_pref",
     }
+    if session.get("role") == "admin":
+        safe_keys.add("created_by")
     updates = {k: v for k, v in data.items() if k in safe_keys}
     if "tags" in updates:
         updates["tags"] = _parse_tags(updates["tags"])
@@ -339,46 +457,58 @@ def api_update_monitor(monitor_id):
     if not updated:
         return jsonify(ok=False, error="Not found"), 404
     add_event(monitor_id, "status_change", {"action": "edited", "fields": list(updates.keys())})
-    add_audit("update", "monitor", monitor_id, updated.get("name", ""), session.get("role", "admin"),
+    add_audit("update", "monitor", monitor_id, updated.get("name", ""), session.get("username", "system"),
               {"fields": list(updates.keys())})
     _add_log(f"Monitor updated: {updated.get('name', monitor_id)}")
     return jsonify(ok=True, monitor=updated)
 
 
 @app.route("/api/monitors/<monitor_id>", methods=["DELETE"])
-@require_admin
+@require_auth
 def api_delete_monitor(monitor_id):
     mon = get_monitor(monitor_id)
+    if mon and not _can_access_monitor(mon):
+        return jsonify(ok=False, error="Access denied"), 403
     name = mon.get("name", monitor_id) if mon else monitor_id
     if delete_monitor(monitor_id):
-        add_audit("delete", "monitor", monitor_id, name, session.get("role", "admin"))
+        add_audit("delete", "monitor", monitor_id, name, session.get("username", "system"))
         _add_log(f"Monitor deleted: {name}")
         return jsonify(ok=True)
     return jsonify(ok=False, error="Not found"), 404
 
 
 @app.route("/api/monitors/<monitor_id>/pause", methods=["POST"])
-@require_admin
+@require_auth
 def api_pause_monitor(monitor_id):
+    mon = get_monitor(monitor_id)
+    if not mon:
+        return jsonify(ok=False, error="Not found"), 404
+    if not _can_access_monitor(mon):
+        return jsonify(ok=False, error="Access denied"), 403
     updated = update_monitor(monitor_id, {"status": "paused"})
     if not updated:
         return jsonify(ok=False, error="Not found"), 404
     add_event(monitor_id, "status_change", {"status": "paused"})
-    add_audit("pause", "monitor", monitor_id, updated.get("name", ""), session.get("role", "admin"))
+    add_audit("pause", "monitor", monitor_id, updated.get("name", ""), session.get("username", "system"))
     _add_log(f"Monitor paused: {updated.get('name', monitor_id)}")
     return jsonify(ok=True, monitor=updated)
 
 
 @app.route("/api/monitors/<monitor_id>/resume", methods=["POST"])
-@require_admin
+@require_auth
 def api_resume_monitor(monitor_id):
+    mon = get_monitor(monitor_id)
+    if not mon:
+        return jsonify(ok=False, error="Not found"), 404
+    if not _can_access_monitor(mon):
+        return jsonify(ok=False, error="Access denied"), 403
     updated = update_monitor(monitor_id, {
         "status": "active", "notified_budget": False, "notified_available": False,
     })
     if not updated:
         return jsonify(ok=False, error="Not found"), 404
     add_event(monitor_id, "status_change", {"status": "active", "action": "resumed"})
-    add_audit("resume", "monitor", monitor_id, updated.get("name", ""), session.get("role", "admin"))
+    add_audit("resume", "monitor", monitor_id, updated.get("name", ""), session.get("username", "system"))
     _add_log(f"Monitor resumed: {updated.get('name', monitor_id)}")
     return jsonify(ok=True, monitor=updated)
 
@@ -399,7 +529,7 @@ def api_duplicate_monitor(monitor_id):
     clone["status"] = "active"
     created = create_monitor(clone)
     add_event(created["id"], "status_change", {"action": "duplicated_from", "source_id": monitor_id})
-    add_audit("duplicate", "monitor", created["id"], created.get("name", ""), session.get("role", "admin"))
+    add_audit("duplicate", "monitor", created["id"], created.get("name", ""), session.get("username", "system"))
     _add_log(f"Monitor duplicated: {created.get('name', created['id'])}")
     return jsonify(ok=True, monitor=created)
 
@@ -417,7 +547,7 @@ def api_batch_pause():
         if update_monitor(mid, {"status": "paused"}):
             add_event(mid, "status_change", {"status": "paused"})
             done += 1
-    add_audit("batch_pause", "monitor", "", f"{done} monitors", session.get("role", "admin"))
+    add_audit("batch_pause", "monitor", "", f"{done} monitors", session.get("username", "system"))
     _add_log(f"Batch paused {done} monitors")
     return jsonify(ok=True, count=done)
 
@@ -431,7 +561,7 @@ def api_batch_resume():
         if update_monitor(mid, {"status": "active", "notified_budget": False, "notified_available": False}):
             add_event(mid, "status_change", {"status": "active", "action": "resumed"})
             done += 1
-    add_audit("batch_resume", "monitor", "", f"{done} monitors", session.get("role", "admin"))
+    add_audit("batch_resume", "monitor", "", f"{done} monitors", session.get("username", "system"))
     _add_log(f"Batch resumed {done} monitors")
     return jsonify(ok=True, count=done)
 
@@ -444,7 +574,7 @@ def api_batch_delete():
     for mid in ids:
         if delete_monitor(mid):
             done += 1
-    add_audit("batch_delete", "monitor", "", f"{done} monitors", session.get("role", "admin"))
+    add_audit("batch_delete", "monitor", "", f"{done} monitors", session.get("username", "system"))
     _add_log(f"Batch deleted {done} monitors")
     return jsonify(ok=True, count=done)
 
@@ -478,15 +608,28 @@ def api_import_monitors():
     if not isinstance(data, list):
         return jsonify(ok=False, error="Expected a JSON array"), 400
     created = 0
+    skipped = 0
     for item in data:
         if not isinstance(item, dict):
+            skipped += 1
+            continue
+        mtype = item.get("type", "product")
+        if mtype == "product" and (not item.get("name") or not item.get("url")):
+            skipped += 1
+            continue
+        if mtype == "train":
+            skipped += 1
+            continue
+        if mtype == "flight" and (not item.get("flight_origin") or not item.get("flight_destination")):
+            skipped += 1
             continue
         item.pop("id", None)
         item.pop("created_at", None)
         item.setdefault("status", "active")
+        item.setdefault("created_by", session.get("username", "admin"))
         create_monitor(item)
         created += 1
-    add_audit("import", "monitor", "", f"{created} monitors", session.get("role", "admin"))
+    add_audit("import", "monitor", "", f"{created} monitors", session.get("username", "system"))
     _add_log(f"Imported {created} monitors")
     return jsonify(ok=True, count=created)
 
@@ -540,7 +683,11 @@ def _do_check_product(mon: dict) -> tuple[dict, dict]:
     from price_monitor.parser_price import extract_price
 
     html = fetch_html(mon["url"])
+    _logger.debug("FETCH       | %s | got %d bytes from %s", mon.get("name", "?"), len(html), mon["url"][:80])
     price = extract_price(html, mon.get("price_selector"), mon["url"])
+    if price is None:
+        _logger.warning("NO PRICE    | %s | could not extract price from %s (html=%d bytes, selector=%s)",
+                        mon.get("name", "?"), mon["url"][:80], len(html), mon.get("price_selector") or "auto")
     updates: dict = {"last_price": price, "last_checked_at": datetime.now(timezone.utc).isoformat()}
     details: dict = {"price": price}
 
@@ -565,75 +712,6 @@ def _do_check_product(mon: dict) -> tuple[dict, dict]:
 
     return updates, details
 
-
-def _do_check_train(mon: dict) -> tuple[dict, dict]:
-    from price_monitor.train_checker import (
-        _api_key, _availability_is_available, _date_to_api, _fare_for_class,
-        fetch_availability, fetch_fare,
-    )
-
-    key = _api_key()
-    if not key:
-        raise RuntimeError("INDIAN_RAIL_API_KEY not set")
-
-    updates: dict = {"last_checked_at": datetime.now(timezone.utc).isoformat()}
-    details: dict = {}
-
-    try:
-        fare_data = fetch_fare(key, mon["train_number"], mon["from_station"], mon["to_station"], mon.get("quota", "GN"))
-        if fare_data.get("Fares"):
-            price = _fare_for_class(fare_data["Fares"], mon.get("class_code", "SL"))
-            if price is not None:
-                updates["last_fare"] = price
-                details["fare"] = price
-            if fare_data.get("TrainName") and not mon.get("train_name"):
-                updates["train_name"] = fare_data["TrainName"]
-    except Exception:
-        pass
-
-    try:
-        api_date = _date_to_api(mon["travel_date"])
-        avail_data = fetch_availability(key, mon["train_number"], mon["from_station"], mon["to_station"], api_date, mon.get("class_code", "SL"))
-        if avail_data.get("Availability"):
-            avail_str = avail_data["Availability"][0].get("Availability", "Unknown")
-            updates["last_availability"] = avail_str
-            details["availability"] = avail_str
-    except Exception:
-        pass
-
-    updates.update(_update_peak(mon, updates.get("last_fare"), "highest_fare"))
-
-    label = mon.get("train_name") or mon.get("train_number", "")
-    fare = updates.get("last_fare")
-
-    if _should_alert(mon, fare, "fare", "fare_budget"):
-        mode = mon.get("alert_mode", "budget")
-        if mode == "budget":
-            _send_alert(mon, f"Train fare alert: {label}",
-                        f"{mon.get('class_code','SL')} fare is {fare:g} (budget {mon['fare_budget']:g}).\n"
-                        f"{mon['from_station']} -> {mon['to_station']} on {mon['travel_date']}")
-        elif mode == "drop_percent":
-            peak = mon.get("highest_fare") or fare
-            drop = ((peak - fare) / peak) * 100 if peak else 0
-            _send_alert(mon, f"Train fare drop: {label}", f"Dropped {drop:.1f}% to {fare:g}.")
-        elif mode == "any_change":
-            _send_alert(mon, f"Train fare changed: {label}", f"Now {fare:g}.")
-        updates["notified_budget"] = True
-        details["fare_alerted"] = True
-    elif fare and mon.get("fare_budget") and fare > mon["fare_budget"]:
-        updates["notified_budget"] = False
-
-    avail_str = updates.get("last_availability", "")
-    if avail_str and _availability_is_available(avail_str) and not mon.get("notified_available"):
-        _send_alert(mon, f"Seats available: {label}",
-                    f"{mon.get('class_code','SL')} status: {avail_str}\n"
-                    f"{mon['from_station']} -> {mon['to_station']} on {mon['travel_date']}")
-        updates["notified_available"] = True
-        details["avail_alerted"] = True
-    elif avail_str and not _availability_is_available(avail_str):
-        updates["notified_available"] = False
-
-    return updates, details
 
 
 def _do_check_flight(mon: dict) -> tuple[dict, dict]:
@@ -688,8 +766,12 @@ def _send_alert(mon: dict, title: str, message: str) -> None:
     from price_monitor.notifier import notify_price_alert
     from price_monitor.db import _json_path
 
-    settings = load_notify_settings(_json_path("items.json"))
-    notify_price_alert(settings, title=title, message=message)
+    _logger.info("ALERT       | %s | %s", mon.get("name", "?"), title)
+    try:
+        settings = load_notify_settings(_json_path("items.json"))
+        notify_price_alert(settings, title=title, message=message)
+    except Exception as e:
+        _logger.error("ALERT FAIL  | %s | %s: %s", mon.get("name", "?"), title, str(e)[:200])
 
 
 def check_single_monitor(monitor_id: str) -> dict:
@@ -697,11 +779,12 @@ def check_single_monitor(monitor_id: str) -> dict:
     if not mon:
         raise ValueError("Monitor not found")
 
+    name = mon.get("name", monitor_id[:8])
+    _logger.debug("CHECK START | %s | type=%s url=%s", name, mon["type"], mon.get("url", mon.get("flight_origin", ""))[:80])
+
     try:
         if mon["type"] == "product":
             updates, details = _do_check_product(mon)
-        elif mon["type"] == "train":
-            updates, details = _do_check_train(mon)
         elif mon["type"] == "flight":
             updates, details = _do_check_flight(mon)
         else:
@@ -712,22 +795,28 @@ def check_single_monitor(monitor_id: str) -> dict:
         update_monitor(monitor_id, updates)
         add_event(monitor_id, "check", details)
         _sse_broadcast({"type": "check", "monitor_id": monitor_id})
+        _logger.info("CHECK OK    | %s | %s", name, json.dumps({k: v for k, v in details.items() if v is not None}, default=str)[:200])
         return {**mon, **updates}
 
     except Exception as e:
+        err_count = (mon.get("consecutive_errors") or 0) + 1
         err_updates = {
-            "consecutive_errors": (mon.get("consecutive_errors") or 0) + 1,
+            "consecutive_errors": err_count,
             "last_error_at": datetime.now(timezone.utc).isoformat(),
             "last_error_msg": str(e)[:500],
         }
         update_monitor(monitor_id, err_updates)
         add_event(monitor_id, "error", {"error": str(e)[:500]})
+        _logger.error("CHECK FAIL  | %s | error #%d: %s", name, err_count, str(e)[:300])
         raise
 
 
 @app.route("/api/monitors/<monitor_id>/check", methods=["POST"])
-@require_admin
+@require_auth
 def api_check_monitor(monitor_id):
+    mon = get_monitor(monitor_id)
+    if mon and not _can_access_monitor(mon):
+        return jsonify(ok=False, error="Access denied"), 403
     try:
         result = check_single_monitor(monitor_id)
         _add_log(f"Manual check: {result.get('name', monitor_id)}")
@@ -773,10 +862,6 @@ def api_export_csv(monitor_id):
         writer.writerow(["timestamp", "price"])
         for e in reversed(events):
             writer.writerow([e["created_at"], e["details"].get("price", "")])
-    elif mon["type"] == "train":
-        writer.writerow(["timestamp", "fare", "availability"])
-        for e in reversed(events):
-            writer.writerow([e["created_at"], e["details"].get("fare", ""), e["details"].get("availability", "")])
     else:
         writer.writerow(["timestamp", "flight_price", "airline"])
         for e in reversed(events):
@@ -798,7 +883,7 @@ def api_comparison(group_name):
     monitors = list_monitors(comparison_group=group_name)
     items = []
     for m in monitors:
-        val = m.get("last_price") or m.get("last_fare") or m.get("last_flight_price")
+        val = m.get("last_price") or m.get("last_flight_price")
         items.append({"id": m["id"], "name": m["name"], "type": m["type"],
                        "value": val, "url": m.get("url", "")})
     items.sort(key=lambda x: x["value"] if x["value"] is not None else 999999)
@@ -816,7 +901,7 @@ def api_get_notifications():
 
 
 @app.route("/api/notifications", methods=["POST"])
-@require_admin
+@require_auth
 def api_save_notifications():
     data = request.get_json(force=True)
     save_settings(data)
@@ -825,13 +910,13 @@ def api_save_notifications():
     from price_monitor.db import _json_path
     write_notify_config_file(_json_path("items.json"), data)
 
-    add_audit("update", "settings", "notify", "notification settings", session.get("role", "admin"))
+    add_audit("update", "settings", "notify", "notification settings", session.get("username", "system"))
     _add_log("Notification settings saved")
     return jsonify(ok=True)
 
 
 @app.route("/api/notifications/test", methods=["POST"])
-@require_admin
+@require_auth
 def api_test_notification():
     data = request.get_json(force=True)
     from price_monitor.notify_settings import notify_settings_from_stored_dict
@@ -855,6 +940,281 @@ def api_audit():
     target_id = request.args.get("target_id")
     entries = get_audit_log(limit=limit, action=action, target_id=target_id)
     return jsonify(entries=entries)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# DEBUG LOG VIEWER
+# ═══════════════════════════════════════════════════════════════════════
+
+@app.route("/api/logs")
+@require_admin
+def api_view_logs():
+    """Return the last N lines from the persistent debug log file."""
+    lines_requested = min(int(request.args.get("lines", 200)), 2000)
+    level_filter = request.args.get("level", "").upper()
+    env_dir = os.environ.get("PRICE_MONITOR_DATA_DIR", "").strip()
+    log_dir = Path(env_dir) if env_dir else (Path(__file__).resolve().parent.parent / "data")
+    log_file = log_dir / "price_monitor.log"
+    if not log_file.exists():
+        return jsonify(ok=True, lines=[], total=0)
+    all_lines = log_file.read_text(encoding="utf-8", errors="replace").strip().split("\n")
+    if level_filter:
+        all_lines = [ln for ln in all_lines if f"| {level_filter}" in ln]
+    tail = all_lines[-lines_requested:]
+    tail.reverse()
+    return jsonify(ok=True, lines=tail, total=len(all_lines))
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# USER MANAGEMENT (admin only)
+# ═══════════════════════════════════════════════════════════════════════
+
+@app.route("/api/users")
+@require_admin
+def api_list_users():
+    users = list_users()
+    for u in users:
+        monitors = list_monitors(created_by=u["username"])
+        u["monitor_count"] = len(monitors)
+        u["active_monitors"] = sum(1 for m in monitors if m.get("status") == "active")
+    return jsonify(users=users)
+
+
+def _execute_user_deletion(target: dict, deleted_by: str, *, notify: bool = True):
+    """Delete a user and all their monitors. Optionally notify via email/ntfy."""
+    monitors = list_monitors(created_by=target["username"])
+
+    if notify and monitors:
+        mon_names = ", ".join(m.get("name", m["id"][:8]) for m in monitors)
+        try:
+            _send_alert(
+                {"name": f"Account: {target['username']}"},
+                "Your monitors have been stopped",
+                f"Your account ({target['username']}) has been deleted by an administrator. "
+                f"The following monitors were stopped and removed: {mon_names}",
+            )
+        except Exception as e:
+            _logger.warning("DELETE NOTIFY FAIL | user=%s err=%s", target["username"], str(e)[:200])
+
+    for m in monitors:
+        delete_monitor(m["id"])
+
+    delete_user(target["id"])
+    add_audit("delete_user", "user", target["id"], deleted_by, "admin")
+    _logger.info("DELETE USER | user=%s deleted_by=%s monitors=%d", target["username"], deleted_by, len(monitors))
+    _add_log(f"User '{target['username']}' deleted by {deleted_by} ({len(monitors)} monitor(s) removed)")
+
+
+@app.route("/api/users/<user_id>", methods=["DELETE"])
+@require_admin
+def api_delete_user(user_id):
+    users = list_users()
+    target = next((u for u in users if u["id"] == user_id), None)
+    if not target:
+        return jsonify(ok=False, error="User not found"), 404
+    if target["username"] == _ADMIN_USERNAME:
+        return jsonify(ok=False, error="Cannot delete the primary admin account"), 400
+    if target["username"] == session.get("username"):
+        return jsonify(ok=False, error="Use 'Delete My Account' to delete your own account"), 400
+
+    is_primary = session.get("username") == _ADMIN_USERNAME
+
+    if not is_primary:
+        existing = list_delete_requests(status="pending")
+        already = any(r["target_user_id"] == user_id for r in existing)
+        if already:
+            return jsonify(ok=False, error="A deletion request for this user is already pending"), 409
+        create_delete_request({
+            "target_user_id": user_id,
+            "target_username": target["username"],
+            "requested_by": session.get("username", ""),
+            "monitor_count": len(list_monitors(created_by=target["username"])),
+        })
+        _logger.info("DELETE REQ  | target=%s requested_by=%s", target["username"], session.get("username"))
+        _add_log(f"Deletion request for '{target['username']}' submitted by {session.get('username')}")
+        return jsonify(ok=True, request_submitted=True)
+
+    _execute_user_deletion(target, session.get("username", "admin"))
+    return jsonify(ok=True)
+
+
+@app.route("/api/users/self-delete", methods=["POST"])
+@require_auth
+def api_self_delete():
+    username = session.get("username", "")
+    if username == _ADMIN_USERNAME:
+        return jsonify(ok=False, error="Primary admin account cannot be deleted"), 400
+
+    data = request.get_json(force=True)
+    password = data.get("password", "")
+    if not password:
+        return jsonify(ok=False, error="Password is required"), 400
+
+    user = verify_user(username, password)
+    if not user:
+        return jsonify(ok=False, error="Incorrect password"), 401
+
+    _execute_user_deletion(user, username, notify=False)
+    session.clear()
+    return jsonify(ok=True, redirect="/login")
+
+
+@app.route("/api/delete-requests")
+@require_admin
+def api_list_delete_requests():
+    if session.get("username") != _ADMIN_USERNAME:
+        return jsonify(ok=False, error="Only the primary admin can view deletion requests"), 403
+    reqs = list_delete_requests(status="pending")
+    return jsonify(requests=reqs)
+
+
+@app.route("/api/delete-requests/count")
+@require_admin
+def api_delete_request_count():
+    if session.get("username") != _ADMIN_USERNAME:
+        return jsonify(count=0)
+    reqs = list_delete_requests(status="pending")
+    return jsonify(count=len(reqs))
+
+
+@app.route("/api/delete-requests/mine")
+@require_admin
+def api_my_delete_requests():
+    """Return requests submitted by the current (secondary) admin."""
+    username = session.get("username", "")
+    all_reqs = list_delete_requests()
+    mine = [r for r in all_reqs if r.get("requested_by") == username]
+    mine.sort(key=lambda r: r.get("created_at", ""), reverse=True)
+    return jsonify(requests=mine[:20])
+
+
+@app.route("/api/delete-requests/mine/ack", methods=["POST"])
+@require_admin
+def api_ack_my_requests():
+    """Mark resolved requests as acknowledged so toasts are not shown again."""
+    username = session.get("username", "")
+    data = request.get_json(force=True)
+    req_ids = data.get("ids", [])
+    for rid in req_ids:
+        req = get_delete_request(rid)
+        if req and req.get("requested_by") == username and req.get("status") != "pending":
+            update_delete_request(rid, {"acknowledged": True})
+    return jsonify(ok=True)
+
+
+@app.route("/api/delete-requests/<req_id>/approve", methods=["POST"])
+@require_admin
+def api_approve_delete_request(req_id):
+    if session.get("username") != _ADMIN_USERNAME:
+        return jsonify(ok=False, error="Only the primary admin can approve deletion requests"), 403
+
+    req = get_delete_request(req_id)
+    if not req:
+        return jsonify(ok=False, error="Request not found"), 404
+    if req["status"] != "pending":
+        return jsonify(ok=False, error="Request is no longer pending"), 400
+
+    users = list_users()
+    target = next((u for u in users if u["id"] == req["target_user_id"]), None)
+    if not target:
+        update_delete_request(req_id, {"status": "approved", "resolved_at": datetime.now(timezone.utc).isoformat(), "acknowledged": False})
+        return jsonify(ok=False, error="User no longer exists"), 404
+
+    _execute_user_deletion(target, _ADMIN_USERNAME)
+    update_delete_request(req_id, {"status": "approved", "resolved_at": datetime.now(timezone.utc).isoformat(), "acknowledged": False})
+    _add_log(f"Deletion request for '{req['target_username']}' approved (requested by {req.get('requested_by', '?')})")
+    return jsonify(ok=True)
+
+
+@app.route("/api/delete-requests/<req_id>/reject", methods=["POST"])
+@require_admin
+def api_reject_delete_request(req_id):
+    if session.get("username") != _ADMIN_USERNAME:
+        return jsonify(ok=False, error="Only the primary admin can reject deletion requests"), 403
+
+    req = get_delete_request(req_id)
+    if not req:
+        return jsonify(ok=False, error="Request not found"), 404
+    if req["status"] != "pending":
+        return jsonify(ok=False, error="Request is no longer pending"), 400
+
+    update_delete_request(req_id, {"status": "rejected", "resolved_at": datetime.now(timezone.utc).isoformat(), "acknowledged": False})
+    _logger.info("DELETE REJ  | target=%s rejected_by=%s", req["target_username"], session.get("username"))
+    _add_log(f"Deletion request for '{req['target_username']}' rejected (requested by {req.get('requested_by', '?')})")
+    return jsonify(ok=True)
+
+
+@app.route("/api/users/<user_id>/reset-password", methods=["POST"])
+@require_admin
+def api_reset_password(user_id):
+    from werkzeug.security import generate_password_hash
+    data = request.get_json(force=True)
+    new_pw = data.get("password", "").strip()
+    if len(new_pw) < 8:
+        return jsonify(ok=False, error="Password must be at least 8 characters"), 400
+
+    users = list_users()
+    target = next((u for u in users if u["id"] == user_id), None)
+    if not target:
+        return jsonify(ok=False, error="User not found"), 404
+
+    update_user(user_id, {"password_hash": generate_password_hash(new_pw)})
+    add_audit("reset_password", "user", user_id, session.get("user", "admin"), "admin")
+    _logger.info("RESET PW    | user=%s by=%s", target["username"], session.get("user"))
+    _add_log(f"Password reset for '{target['username']}' by admin")
+    return jsonify(ok=True)
+
+
+@app.route("/api/users/<user_id>/role", methods=["POST"])
+@require_admin
+def api_change_role(user_id):
+    if session.get("username") != _ADMIN_USERNAME:
+        return jsonify(ok=False, error="Only the primary admin can change roles"), 403
+
+    data = request.get_json(force=True)
+    new_role = data.get("role", "").strip().lower()
+    if new_role not in ("viewer", "admin"):
+        return jsonify(ok=False, error="Invalid role"), 400
+
+    users = list_users()
+    target = next((u for u in users if u["id"] == user_id), None)
+    if not target:
+        return jsonify(ok=False, error="User not found"), 404
+    if target["username"] == _ADMIN_USERNAME:
+        return jsonify(ok=False, error="Cannot change the primary admin's role"), 400
+
+    update_user(user_id, {"role": new_role})
+    add_audit("change_role", "user", user_id, session.get("username", "admin"), "admin")
+    _logger.info("CHANGE ROLE | user=%s new_role=%s by=%s", target["username"], new_role, session.get("username"))
+    return jsonify(ok=True)
+
+
+@app.route("/api/users/self/change-password", methods=["POST"])
+@require_auth
+def api_self_change_password():
+    """Allow any user to change their own password."""
+    data = request.get_json(force=True)
+    current_pw = data.get("current_password", "").strip()
+    new_pw = data.get("new_password", "").strip()
+    confirm_pw = data.get("confirm_password", "").strip()
+
+    if not current_pw or not new_pw:
+        return jsonify(ok=False, error="Current and new passwords are required"), 400
+    if len(new_pw) < 8:
+        return jsonify(ok=False, error="New password must be at least 8 characters"), 400
+    if new_pw != confirm_pw:
+        return jsonify(ok=False, error="New passwords do not match"), 400
+
+    username = session.get("username", "")
+    user = verify_user(username, current_pw)
+    if not user:
+        return jsonify(ok=False, error="Current password is incorrect"), 401
+
+    from werkzeug.security import generate_password_hash
+    update_user(user["id"], {"password_hash": generate_password_hash(new_pw)})
+    add_audit("change_password", "user", user["id"], username, session.get("role", "viewer"))
+    _logger.info("CHANGE PW   | user=%s (self)", username)
+    return jsonify(ok=True)
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -896,20 +1256,7 @@ def _is_expired(mon: dict) -> bool:
     now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     mtype = mon.get("type", "product")
 
-    if mtype == "train":
-        td = mon.get("travel_date", "")
-        if td:
-            normalized = td.replace("/", "-")
-            parts = normalized.split("-")
-            if len(parts) == 3:
-                if len(parts[0]) == 4:
-                    iso = normalized
-                else:
-                    iso = f"{parts[2]}-{parts[1]}-{parts[0]}"
-                if iso < now_str:
-                    return True
-
-    elif mtype == "flight":
+    if mtype == "flight":
         fd = mon.get("flight_date", "")
         if fd and fd < now_str:
             return True
@@ -934,9 +1281,6 @@ def _smart_interval(mon: dict) -> int:
     if mtype == "product":
         current = mon.get("last_price")
         budget = mon.get("budget")
-    elif mtype == "train":
-        current = mon.get("last_fare")
-        budget = mon.get("fare_budget")
     elif mtype == "flight":
         current = mon.get("last_flight_price")
         budget = mon.get("flight_max_price")
@@ -959,6 +1303,7 @@ def _smart_interval(mon: dict) -> int:
 
 def _monitor_loop() -> None:
     global _monitor_running
+    my_thread = threading.current_thread()
     while _monitor_running:
         active = list_monitors(status="active")
         if not active:
@@ -983,13 +1328,6 @@ def _monitor_loop() -> None:
                 if mon["type"] == "product":
                     p = result.get("last_price")
                     _add_log(f"Check {name}: {p:g}" if p is not None else f"Check {name}: no price")
-                elif mon["type"] == "train":
-                    parts = []
-                    if result.get("last_fare") is not None:
-                        parts.append(f"fare {result['last_fare']:g}")
-                    if result.get("last_availability"):
-                        parts.append(result["last_availability"])
-                    _add_log(f"Check {name}: {', '.join(parts) if parts else 'no data'}")
                 elif mon["type"] == "flight":
                     fp = result.get("last_flight_price")
                     _add_log(f"Check {name}: {fp:g}" if fp is not None else f"Check {name}: no price")
@@ -1000,7 +1338,9 @@ def _monitor_loop() -> None:
         min_interval = min(intervals) if intervals else 60
         if _stop_event.wait(timeout=max(60, min_interval * 60)):
             break
-    _monitor_running = False
+    with _lock:
+        if _monitor_thread is my_thread:
+            _monitor_running = False
 
 
 @app.route("/api/monitor/start", methods=["POST"])
@@ -1017,7 +1357,7 @@ def start_monitor_loop():
         _monitor_running = True
         _monitor_thread = threading.Thread(target=_monitor_loop, daemon=True)
         _monitor_thread.start()
-    add_audit("start", "monitor_loop", "", "", session.get("role", "admin"))
+    add_audit("start", "monitor_loop", "", "", session.get("username", "system"))
     _add_log(f"Monitoring started ({len(active)} active monitors)")
     return jsonify(ok=True, monitoring=True)
 
@@ -1026,10 +1366,14 @@ def start_monitor_loop():
 @require_admin
 def stop_monitor_loop():
     global _monitor_running
+    old_thread = None
     with _lock:
         _monitor_running = False
         _stop_event.set()
-    add_audit("stop", "monitor_loop", "", "", session.get("role", "admin"))
+        old_thread = _monitor_thread
+    if old_thread and old_thread.is_alive():
+        old_thread.join(timeout=5)
+    add_audit("stop", "monitor_loop", "", "", session.get("username", "system"))
     _add_log("Monitoring stopped")
     return jsonify(ok=True, monitoring=False)
 
@@ -1060,11 +1404,6 @@ def _build_digest() -> str:
             val_s = f"{val:g}" if val is not None else "?"
             bud_s = f" (budget {budget:g})" if budget is not None else ""
             line = f"  [{mtype}] {name}: price={val_s}{bud_s}"
-        elif mtype == "train":
-            val = m.get("last_fare")
-            avail = m.get("last_availability", "")
-            val_s = f"{val:g}" if val is not None else "?"
-            line = f"  [{mtype}] {name}: fare={val_s} {avail}"
         elif mtype == "flight":
             val = m.get("last_flight_price")
             val_s = f"{val:g}" if val is not None else "?"
@@ -1117,7 +1456,12 @@ def _digest_loop() -> None:
 @app.route("/api/status")
 @require_auth
 def api_status():
-    monitors = list_monitors()
+    is_admin = session.get("role") == "admin"
+    username = session.get("username", "")
+    if is_admin:
+        monitors = list_monitors()
+    else:
+        monitors = list_monitors(created_by=username)
     return jsonify(
         monitoring=_monitor_running,
         total=len(monitors),
@@ -1125,7 +1469,7 @@ def api_status():
         paused=sum(1 for m in monitors if m.get("status") == "paused"),
         completed=sum(1 for m in monitors if m.get("status") == "completed"),
         expired=sum(1 for m in monitors if m.get("status") == "expired"),
-        logs=list(_global_log),
+        logs=list(_global_log) if is_admin else [],
     )
 
 
@@ -1179,6 +1523,9 @@ def _keep_alive_loop() -> None:
             httpx.get(url, timeout=30)
         except Exception:
             pass
+
+
+_ensure_admin_exists()
 
 
 def _deferred_bootstrap() -> None:

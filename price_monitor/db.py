@@ -7,12 +7,15 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 _supabase_client = None
+_json_locks: dict[str, threading.Lock] = {}
+_json_locks_lock = threading.Lock()
 
 
 def _get_supabase():
@@ -58,6 +61,13 @@ def _read_json(name: str) -> list[dict]:
         return []
 
 
+def _file_lock(name: str) -> threading.Lock:
+    with _json_locks_lock:
+        if name not in _json_locks:
+            _json_locks[name] = threading.Lock()
+        return _json_locks[name]
+
+
 def _write_json(name: str, data: list[dict]) -> None:
     p = _json_path(name)
     p.write_text(json.dumps(data, indent=2, default=str), encoding="utf-8")
@@ -89,9 +99,10 @@ def create_monitor(mon: dict) -> dict:
         resp = sb.table("monitors").insert(mon).execute()
         return resp.data[0]
 
-    all_m = _read_json("monitors.json")
-    all_m.append(mon)
-    _write_json("monitors.json", all_m)
+    with _file_lock("monitors.json"):
+        all_m = _read_json("monitors.json")
+        all_m.append(mon)
+        _write_json("monitors.json", all_m)
     return mon
 
 
@@ -156,12 +167,13 @@ def update_monitor(monitor_id: str, updates: dict) -> dict | None:
         resp = sb.table("monitors").update(updates).eq("id", monitor_id).execute()
         return resp.data[0] if resp.data else None
 
-    all_m = _read_json("monitors.json")
-    for m in all_m:
-        if m["id"] == monitor_id:
-            m.update(updates)
-            _write_json("monitors.json", all_m)
-            return m
+    with _file_lock("monitors.json"):
+        all_m = _read_json("monitors.json")
+        for m in all_m:
+            if m["id"] == monitor_id:
+                m.update(updates)
+                _write_json("monitors.json", all_m)
+                return m
     return None
 
 
@@ -172,15 +184,17 @@ def delete_monitor(monitor_id: str) -> bool:
         sb.table("events").delete().eq("monitor_id", monitor_id).execute()
         return True
 
-    all_m = _read_json("monitors.json")
-    before = len(all_m)
-    all_m = [m for m in all_m if m["id"] != monitor_id]
-    if len(all_m) == before:
-        return False
-    _write_json("monitors.json", all_m)
-    all_e = _read_json("events.json")
-    all_e = [e for e in all_e if e.get("monitor_id") != monitor_id]
-    _write_json("events.json", all_e)
+    with _file_lock("monitors.json"):
+        all_m = _read_json("monitors.json")
+        before = len(all_m)
+        all_m = [m for m in all_m if m["id"] != monitor_id]
+        if len(all_m) == before:
+            return False
+        _write_json("monitors.json", all_m)
+    with _file_lock("events.json"):
+        all_e = _read_json("events.json")
+        all_e = [e for e in all_e if e.get("monitor_id") != monitor_id]
+        _write_json("events.json", all_e)
     return True
 
 
@@ -201,11 +215,12 @@ def add_event(monitor_id: str, event_type: str, details: dict | None = None) -> 
         resp = sb.table("events").insert(ev).execute()
         return resp.data[0]
 
-    all_e = _read_json("events.json")
-    all_e.append(ev)
-    if len(all_e) > 5000:
-        all_e = all_e[-5000:]
-    _write_json("events.json", all_e)
+    with _file_lock("events.json"):
+        all_e = _read_json("events.json")
+        all_e.append(ev)
+        if len(all_e) > 5000:
+            all_e = all_e[-5000:]
+        _write_json("events.json", all_e)
     return ev
 
 
@@ -262,11 +277,12 @@ def add_audit(action: str, target_type: str, target_id: str,
         resp = sb.table("audit_log").insert(entry).execute()
         return resp.data[0]
 
-    all_a = _read_json("audit_log.json")
-    all_a.append(entry)
-    if len(all_a) > 2000:
-        all_a = all_a[-2000:]
-    _write_json("audit_log.json", all_a)
+    with _file_lock("audit_log.json"):
+        all_a = _read_json("audit_log.json")
+        all_a.append(entry)
+        if len(all_a) > 2000:
+            all_a = all_a[-2000:]
+        _write_json("audit_log.json", all_a)
     return entry
 
 
@@ -295,6 +311,142 @@ def get_audit_log(
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# USERS (registration + login)
+# ═══════════════════════════════════════════════════════════════════════
+
+def create_user(user: dict) -> dict:
+    from werkzeug.security import generate_password_hash
+    user.setdefault("id", str(uuid.uuid4()))
+    user["password_hash"] = generate_password_hash(user.pop("password"))
+    user.setdefault("role", "viewer")
+    user.setdefault("created_at", _now_iso())
+
+    sb = _get_supabase()
+    if sb:
+        resp = sb.table("users").insert(user).execute()
+        return resp.data[0]
+
+    with _file_lock("users.json"):
+        all_u = _read_json("users.json")
+        all_u.append(user)
+        _write_json("users.json", all_u)
+    return user
+
+
+def get_user_by_username(username: str) -> dict | None:
+    sb = _get_supabase()
+    if sb:
+        resp = sb.table("users").select("*").eq("username", username).execute()
+        return resp.data[0] if resp.data else None
+
+    for u in _read_json("users.json"):
+        if u.get("username", "").lower() == username.lower():
+            return u
+    return None
+
+
+def verify_user(username: str, password: str) -> dict | None:
+    from werkzeug.security import check_password_hash
+    user = get_user_by_username(username)
+    if user and check_password_hash(user["password_hash"], password):
+        return user
+    return None
+
+
+def list_users() -> list[dict]:
+    sb = _get_supabase()
+    if sb:
+        resp = sb.table("users").select("id, username, role, created_at").order("created_at").execute()
+        return resp.data
+
+    return [
+        {k: u[k] for k in ("id", "username", "role", "created_at") if k in u}
+        for u in _read_json("users.json")
+    ]
+
+
+def count_users() -> int:
+    sb = _get_supabase()
+    if sb:
+        resp = sb.table("users").select("id", count="exact").execute()
+        return resp.count or 0
+    return len(_read_json("users.json"))
+
+
+def update_user(user_id: str, updates: dict) -> dict | None:
+    sb = _get_supabase()
+    if sb:
+        resp = sb.table("users").update(updates).eq("id", user_id).execute()
+        return resp.data[0] if resp.data else None
+
+    with _file_lock("users.json"):
+        all_u = _read_json("users.json")
+        for u in all_u:
+            if u["id"] == user_id:
+                u.update(updates)
+                _write_json("users.json", all_u)
+                return u
+    return None
+
+
+def delete_user(user_id: str) -> bool:
+    sb = _get_supabase()
+    if sb:
+        sb.table("users").delete().eq("id", user_id).execute()
+        return True
+
+    with _file_lock("users.json"):
+        all_u = _read_json("users.json")
+        before = len(all_u)
+        all_u = [u for u in all_u if u["id"] != user_id]
+        if len(all_u) == before:
+            return False
+        _write_json("users.json", all_u)
+    return True
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# DELETE REQUESTS (approval workflow)
+# ═══════════════════════════════════════════════════════════════════════
+
+def create_delete_request(req: dict) -> dict:
+    req.setdefault("id", str(uuid.uuid4()))
+    req.setdefault("status", "pending")
+    req.setdefault("created_at", _now_iso())
+
+    with _file_lock("delete_requests.json"):
+        all_r = _read_json("delete_requests.json")
+        all_r.append(req)
+        _write_json("delete_requests.json", all_r)
+    return req
+
+
+def list_delete_requests(*, status: str | None = None) -> list[dict]:
+    all_r = _read_json("delete_requests.json")
+    if status:
+        all_r = [r for r in all_r if r.get("status") == status]
+    return sorted(all_r, key=lambda r: r.get("created_at", ""), reverse=True)
+
+
+def get_delete_request(req_id: str) -> dict | None:
+    for r in _read_json("delete_requests.json"):
+        if r["id"] == req_id:
+            return r
+    return None
+
+
+def update_delete_request(req_id: str, updates: dict) -> dict | None:
+    with _file_lock("delete_requests.json"):
+        all_r = _read_json("delete_requests.json")
+        for r in all_r:
+            if r["id"] == req_id:
+                r.update(updates)
+                _write_json("delete_requests.json", all_r)
+                return r
+    return None
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # SETTINGS (notification config)
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -316,7 +468,8 @@ def save_settings(config: dict) -> None:
         sb.table("settings").upsert({"id": "notify", "config": config}).execute()
         return
 
-    _write_json("settings.json", [config])
+    with _file_lock("settings.json"):
+        _write_json("settings.json", [config])
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -411,6 +564,15 @@ CREATE TABLE IF NOT EXISTS audit_log (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at DESC);
+
+CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY,
+    username TEXT UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'viewer',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON users(username);
 """
 
 SUPABASE_MIGRATION_SQL = """
@@ -444,4 +606,13 @@ CREATE TABLE IF NOT EXISTS audit_log (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at DESC);
+
+CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY,
+    username TEXT UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'viewer',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON users(username);
 """

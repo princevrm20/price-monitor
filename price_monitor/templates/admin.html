@@ -79,9 +79,12 @@ details .inner{margin-top:.85rem;}
 </head>
 <body>
 <header>
-  <h1>Price Monitor Admin<span class="role-badge">{{ role }}</span></h1>
+  <h1>Price Monitor{% if role == 'admin' %} Admin{% endif %}<span class="role-badge">{{ role }}</span></h1>
   <div class="hdr-r">
+    <span style="font-size:.82rem;opacity:.9;">{{ username }}</span>
+    {% if role == 'admin' %}
     <span class="badge {{ 'b-active' if monitoring else 'b-paused' }}" id="badge-mon">{{ 'Monitoring' if monitoring else 'Idle' }}</span>
+    {% endif %}
     <button onclick="toggleTheme()">Theme</button>
     <a href="/logout">Logout</a>
   </div>
@@ -96,35 +99,35 @@ details .inner{margin-top:.85rem;}
   <div class="stat"><div class="sv" id="st-expired">{{ monitors|selectattr('status','equalto','expired')|list|length }}</div><div class="sl">Expired</div></div>
 </div>
 
-{% if role == 'admin' %}
 <!-- Controls -->
 <div class="card">
   <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem">
     <div class="br" style="margin:0">
       <button class="btn bp" onclick="openCreate('product')">+ Product</button>
-      <button class="btn bp" onclick="openCreate('train')">+ Train</button>
       <button class="btn bp" onclick="openCreate('flight')">+ Flight</button>
     </div>
+    {% if role == 'admin' %}
     <div class="br" style="margin:0">
       <button class="btn bo" onclick="exportAll()">Export All</button>
       <button class="btn bo" onclick="$('import-file').click()">Import</button>
       <input type="file" id="import-file" accept=".json" style="display:none" onchange="importFile(this)">
-      <button class="btn bs" id="btn-start" onclick="startLoop()">Start Monitoring</button>
-      <button class="btn bd" id="btn-stop" onclick="stopLoop()">Stop Monitoring</button>
+      {% set has_active = monitors|selectattr('status','equalto','active')|list|length > 0 %}
+      <button class="btn bs" id="btn-start" onclick="startLoop()" style="{{ 'display:none' if monitoring }}" {{ 'disabled' if not has_active }}>Start Monitoring</button>
+      <button class="btn bd" id="btn-stop" onclick="stopLoop()" style="{{ 'display:none' if not monitoring }}">Stop Monitoring</button>
       <button class="btn bo" onclick="sendDigest()">Send Digest</button>
     </div>
+    {% endif %}
   </div>
 </div>
-{% endif %}
 
 <!-- Filters -->
 <div class="card">
   <form class="filters" method="GET">
-    <select name="type"><option value="">All types</option><option value="product" {{ 'selected' if filt_type=='product' }}>Product</option><option value="train" {{ 'selected' if filt_type=='train' }}>Train</option><option value="flight" {{ 'selected' if filt_type=='flight' }}>Flight</option></select>
+    <select name="type"><option value="">All types</option><option value="product" {{ 'selected' if filt_type=='product' }}>Product</option><option value="flight" {{ 'selected' if filt_type=='flight' }}>Flight</option></select>
     <select name="status"><option value="">All statuses</option><option value="active" {{ 'selected' if filt_status=='active' }}>Active</option><option value="paused" {{ 'selected' if filt_status=='paused' }}>Paused</option><option value="completed" {{ 'selected' if filt_status=='completed' }}>Completed</option><option value="expired" {{ 'selected' if filt_status=='expired' }}>Expired</option></select>
     <select name="category"><option value="">All categories</option>{% for c in categories %}<option value="{{ c }}" {{ 'selected' if filt_category==c }}>{{ c }}</option>{% endfor %}</select>
     <select name="tag"><option value="">All tags</option>{% for t in all_tags %}<option value="{{ t }}" {{ 'selected' if filt_tag==t }}>{{ t }}</option>{% endfor %}</select>
-    <select name="creator"><option value="">All creators</option>{% for c in creators %}<option value="{{ c }}" {{ 'selected' if filt_creator==c }}>{{ c }}</option>{% endfor %}</select>
+    {% if role == 'admin' %}<select name="creator"><option value="">All creators</option>{% for c in creators %}<option value="{{ c }}" {{ 'selected' if filt_creator==c }}>{{ c }}</option>{% endfor %}</select>{% endif %}
     <button type="submit" class="btn bo">Filter</button>
     <a href="/" class="btn bo">Clear</a>
   </form>
@@ -134,8 +137,8 @@ details .inner{margin-top:.85rem;}
   <table>
     <thead><tr>
       {% if role == 'admin' %}<th><input type="checkbox" id="sel-all" onchange="toggleAll(this)"></th>{% endif %}
-      <th>Name</th><th>Type</th><th>Status</th><th>Last Value</th><th>Last Check</th><th>Created by</th><th>Tags</th>
-      {% if role == 'admin' %}<th>Actions</th>{% endif %}
+      <th>Name</th><th>Type</th><th>Status</th><th>Last Value</th><th>Last Check</th>{% if role == 'admin' %}<th>Created by</th>{% endif %}<th>Tags</th>
+      <th>Actions</th>
     </tr></thead>
     <tbody>
     {% for m in monitors %}
@@ -149,45 +152,37 @@ details .inner{margin-top:.85rem;}
       <td>{{ m.type }}</td>
       <td><span class="badge b-{{ m.status }}">{{ m.status }}</span></td>
       {% set mlp = m.get('last_price') %}
-      {% set mlf = m.get('last_fare') %}
-      {% set mla = m.get('last_availability','') %}
       {% set mlfp = m.get('last_flight_price') %}
       {% set mlc = m.get('last_checked_at','') %}
       <td>
         {% if m.type == 'product' %}
           {{ '{:g}'.format(mlp) if mlp is not none else '—' }}
-        {% elif m.type == 'train' %}
-          {% if mlf is not none %}fare {{ '{:g}'.format(mlf) }}{% endif %}
-          {% if mla %} {{ mla }}{% endif %}
-          {% if mlf is none and not mla %}—{% endif %}
         {% elif m.type == 'flight' %}
           {{ '{:g}'.format(mlfp) if mlfp is not none else '—' }}
         {% endif %}
       </td>
       <td style="font-size:.78rem">{{ mlc[:19] if mlc else '—' }}</td>
-      <td style="font-size:.8rem">{{ m.get('created_by','') or '—' }}</td>
+      {% if role == 'admin' %}<td style="font-size:.8rem">{{ m.get('created_by','') or '—' }}</td>{% endif %}
       <td>{% for tag in (m.get('tags') or []) %}<span class="tag">{{ tag }}</span>{% endfor %}{% if not m.get('tags') and m.get('category') %}<span class="tag">{{ m.category }}</span>{% endif %}</td>
-      {% if role == 'admin' %}
       <td>
         <div class="actions">
           <button class="btn bo" onclick="checkMon('{{ m.id }}',this)">Check</button>
           {% if m.status == 'active' %}
             <button class="btn bw" onclick="pauseMon('{{ m.id }}')">Pause</button>
-          {% elif m.status == 'paused' %}
+          {% elif m.status == 'paused' or m.status == 'expired' %}
             <button class="btn bs" onclick="resumeMon('{{ m.id }}')">Resume</button>
           {% endif %}
-          <button class="btn bo" onclick="dupMon('{{ m.id }}')">Dup</button>
+          {% if role == 'admin' %}<button class="btn bo" onclick="dupMon('{{ m.id }}')">Dup</button>{% endif %}
           <button class="btn bd" onclick="delMon('{{ m.id }}','{{ m.name|e }}')">Del</button>
         </div>
       </td>
-      {% endif %}
     </tr>
     {% endfor %}
     </tbody>
   </table>
   </div>
   {% else %}
-  <div class="empty">No monitors found. Create one above.</div>
+  <div class="empty">No monitors yet. Click "+ Product" or "+ Flight" above to start tracking prices.</div>
   {% endif %}
 </div>
 
@@ -196,28 +191,32 @@ details .inner{margin-top:.85rem;}
   <details>
     <summary>Notification Settings</summary>
     <div class="inner">
-      <p class="hint" style="margin-bottom:.85rem">Configure how you receive alerts. Email fields are optional.</p>
-      <div class="fg"><label>ntfy topic</label><input type="text" id="n-ntfy-topic"></div>
-      <div class="fg"><label>ntfy server</label><input type="text" id="n-ntfy-server" value="https://ntfy.sh"></div>
-      <div class="fg"><label>Telegram bot token</label><input type="password" id="n-tg-token"></div>
-      <div class="fg"><label>Telegram chat ID</label><input type="text" id="n-tg-chat"></div>
-      <div class="fg"><label>Webhook URL</label><input type="url" id="n-webhook"></div>
-      <div class="fg"><label>CallMeBot phone</label><input type="text" id="n-cm-phone"></div>
-      <div class="fg"><label>CallMeBot API key</label><input type="password" id="n-cm-key"></div>
+      <p class="hint" style="margin-bottom:.85rem">Configure how you receive price drop alerts.</p>
+
+      <div class="fg"><label>Email address</label><input type="email" id="n-smtp-to" placeholder="you@example.com"></div>
+      <p class="hint" style="margin-bottom:.6rem">Enter your email to receive price drop alerts.</p>
+
       <hr style="margin:.8rem 0;border:none;border-top:1px solid var(--border)">
-      <p class="hint" style="margin-bottom:.5rem">Email (optional SMTP)</p>
+      <p class="hint" style="margin-bottom:.5rem;font-weight:500;color:var(--text)">Push Notifications (ntfy)</p>
+      <div class="fg"><label>ntfy topic</label><input type="text" id="n-ntfy-topic" placeholder="e.g. my-price-alerts"></div>
+      <div class="fg"><label>ntfy server</label><input type="text" id="n-ntfy-server" value="https://ntfy.sh"></div>
+      <p class="hint" style="margin-bottom:.6rem">Free push notifications to your phone. Install the <a href="https://ntfy.sh" target="_blank" style="color:var(--primary)">ntfy app</a> and subscribe to your topic.</p>
+
+      {% if role == 'admin' %}
+      <hr style="margin:.8rem 0;border:none;border-top:1px solid var(--border)">
+      <p class="hint" style="margin-bottom:.5rem;font-weight:500;color:var(--text)">SMTP Server Config (admin only)</p>
+      <p class="hint" style="margin-bottom:.6rem">Mail server for sending email alerts. Defaults to Gmail SMTP — just enter your Gmail and <a href="https://myaccount.google.com/apppasswords" target="_blank" style="color:var(--primary)">app password</a>.</p>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem">
-        <div class="fg"><label>SMTP Host</label><input type="text" id="n-smtp-host" placeholder="smtp.gmail.com"></div>
+        <div class="fg"><label>SMTP Host</label><input type="text" id="n-smtp-host" value="smtp.gmail.com"></div>
         <div class="fg"><label>SMTP Port</label><input type="number" id="n-smtp-port" value="587"></div>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem">
-        <div class="fg"><label>SMTP User</label><input type="text" id="n-smtp-user"></div>
-        <div class="fg"><label>SMTP Password</label><input type="password" id="n-smtp-pass"></div>
+        <div class="fg"><label>SMTP User (your Gmail)</label><input type="email" id="n-smtp-user" placeholder="you@gmail.com"></div>
+        <div class="fg"><label>SMTP Password (app password)</label><input type="password" id="n-smtp-pass" placeholder="xxxx xxxx xxxx xxxx"></div>
       </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem">
-        <div class="fg"><label>From address</label><input type="email" id="n-smtp-from"></div>
-        <div class="fg"><label>To address</label><input type="email" id="n-smtp-to"></div>
-      </div>
+      <div class="fg"><label>From address</label><input type="email" id="n-smtp-from" placeholder="you@gmail.com"></div>
+      {% endif %}
+
       <div class="br">
         <button class="btn bp" onclick="saveNotify()">Save</button>
         <button class="btn bo" onclick="testNotify()">Test</button>
@@ -226,6 +225,31 @@ details .inner{margin-top:.85rem;}
   </details>
 </div>
 
+{% if username != primary_admin %}
+<!-- Account Settings -->
+<div class="card">
+  <details>
+    <summary>Account</summary>
+    <div class="inner">
+      <p class="hint" style="margin-bottom:.8rem">Manage your account settings.</p>
+
+      <p class="hint" style="margin-bottom:.5rem;font-weight:500;color:var(--text)">Change Password</p>
+      <div class="fg"><label>Current password</label><input type="password" id="cp-current" placeholder="Enter current password"></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem">
+        <div class="fg"><label>New password</label><input type="password" id="cp-new" placeholder="Min 8 characters" minlength="8"></div>
+        <div class="fg"><label>Confirm new password</label><input type="password" id="cp-confirm" placeholder="Confirm new password" minlength="8"></div>
+      </div>
+      <button class="btn bp" onclick="submitChangePw()" style="font-size:.82rem;margin-bottom:1.2rem">Change Password</button>
+
+      <hr style="margin:.8rem 0;border:none;border-top:1px solid var(--border)">
+      <p class="hint" style="margin-bottom:.5rem;font-weight:500;color:var(--danger)">Danger Zone</p>
+      <button class="btn bd" onclick="openSelfDelete()" style="font-size:.82rem">Delete My Account</button>
+    </div>
+  </details>
+</div>
+{% endif %}
+
+{% if role == 'admin' %}
 <!-- Audit Log -->
 <div class="card">
   <details>
@@ -254,15 +278,103 @@ details .inner{margin-top:.85rem;}
   <h2>Activity Log</h2>
   <div class="log" id="log">{{ logs|join('\n') if logs else 'No activity yet.' }}</div>
 </div>
+{% endif %}
+
+{% if role == 'admin' %}
+<!-- User Management -->
+<div class="card">
+  <details id="user-mgmt-details">
+    <summary>User Management <span id="pending-badge" style="display:none;background:var(--danger);color:#fff;font-size:.65rem;padding:.15rem .5rem;border-radius:999px;margin-left:.4rem;vertical-align:middle;font-weight:600"></span></summary>
+    <div class="inner">
+      <p class="hint" style="margin-bottom:.8rem">View registered users, change roles, reset passwords, or delete accounts.</p>
+      <button class="btn bo" onclick="loadUsers()" style="font-size:.78rem;margin-bottom:.7rem">Refresh</button>
+      <span id="user-count" style="font-size:.75rem;color:var(--muted);margin-left:.5rem"></span>
+      <div style="overflow-x:auto">
+        <table id="users-table" style="font-size:.8rem">
+          <thead><tr><th>Username</th><th>Role</th><th>Created</th><th>Monitors</th><th>Active</th><th>Actions</th></tr></thead>
+          <tbody id="users-tbody"><tr><td colspan="6" class="empty">Loading users...</td></tr></tbody>
+        </table>
+      </div>
+
+      {% if username == primary_admin %}
+      <hr style="margin:1rem 0;border:none;border-top:1px solid var(--border)">
+      <p class="hint" style="margin-bottom:.5rem;font-weight:500;color:var(--text)">Pending Deletion Requests</p>
+      <div id="pending-requests">
+        <p class="hint">Loading...</p>
+      </div>
+      {% else %}
+      <hr style="margin:1rem 0;border:none;border-top:1px solid var(--border)">
+      <p class="hint" style="margin-bottom:.5rem;font-weight:500;color:var(--text)">My Deletion Requests</p>
+      <div id="my-requests">
+        <p class="hint">Loading...</p>
+      </div>
+      {% endif %}
+    </div>
+  </details>
+</div>
+
+<!-- Reset Password Modal -->
+<div class="modal-bg" id="modal-reset-pw">
+<div class="modal" style="max-width:400px;">
+  <h2>Reset Password</h2>
+  <p style="font-size:.84rem;color:var(--muted);margin-bottom:.8rem">User: <strong id="rp-username"></strong></p>
+  <div class="fg"><label>New password</label><input type="password" id="rp-password" placeholder="Min 8 characters" minlength="8"></div>
+  <div class="fg"><label>Confirm password</label><input type="password" id="rp-confirm" placeholder="Confirm new password" minlength="8"></div>
+  <div class="br">
+    <button class="btn bp" onclick="submitResetPw()">Reset Password</button>
+    <button class="btn bo" onclick="$('modal-reset-pw').classList.remove('show')">Cancel</button>
+  </div>
+</div>
+</div>
+
+<!-- Debug Log -->
+<div class="card">
+  <details>
+    <summary>Debug Log (persistent)</summary>
+    <div class="inner">
+      <p class="hint" style="margin-bottom:.6rem">Persistent file-based log. Survives restarts. Filter by level to find issues quickly.</p>
+      <div style="display:flex;gap:.5rem;margin-bottom:.6rem;flex-wrap:wrap;align-items:center;">
+        <select id="dbg-level" style="width:auto;min-width:100px;font-size:.8rem;padding:.35rem .5rem"><option value="">All levels</option><option value="DEBUG">DEBUG</option><option value="INFO">INFO</option><option value="WARNING">WARNING</option><option value="ERROR">ERROR</option></select>
+        <input type="number" id="dbg-lines" value="100" min="10" max="2000" style="width:80px;font-size:.8rem;padding:.35rem .5rem">
+        <button class="btn bo" onclick="loadDebugLog()" style="font-size:.78rem">Load</button>
+        <span id="dbg-count" style="font-size:.75rem;color:var(--muted)"></span>
+      </div>
+      <div class="log" id="dbg-log" style="height:300px;font-size:.72rem;">Click "Load" to fetch debug logs.</div>
+    </div>
+  </details>
+</div>
+{% endif %}
 </main>
+
+<!-- Self-Delete Account Modal -->
+{% if username != primary_admin %}
+<div class="modal-bg" id="modal-self-delete">
+<div class="modal" style="max-width:420px;">
+  <h2 style="color:var(--danger)">Delete My Account</h2>
+  <div style="background:#fef2f2;border-radius:8px;padding:.8rem;margin-bottom:1rem;font-size:.84rem;color:var(--danger)">
+    <strong>Warning:</strong> This action is permanent and cannot be undone.
+    <ul style="margin:.5rem 0 0 1.2rem;line-height:1.6">
+      <li>Your account will be permanently deleted</li>
+      <li>All your monitors will be stopped and removed</li>
+      <li>You will be logged out immediately</li>
+    </ul>
+  </div>
+  <div class="fg"><label>Enter your password to confirm</label><input type="password" id="sd-password" placeholder="Your current password"></div>
+  <div class="br">
+    <button class="btn bd" onclick="submitSelfDelete()">Delete My Account</button>
+    <button class="btn bo" onclick="$('modal-self-delete').classList.remove('show')">Cancel</button>
+  </div>
+</div>
+</div>
+{% endif %}
 
 <!-- Create/Edit Modal -->
 <div class="modal-bg" id="modal-create">
 <div class="modal">
   <h2 id="modal-title">New Monitor</h2>
-  <div class="fg"><label>Type</label><select id="c-type" onchange="toggleFields()"><option value="product">Product</option><option value="train">Train</option><option value="flight">Flight</option></select></div>
+  <div class="fg"><label>Type</label><select id="c-type" onchange="toggleFields()"><option value="product">Product</option><option value="flight">Flight</option></select></div>
   <div class="fg"><label>Name <span class="req">*</span></label><input type="text" id="c-name"></div>
-  <div class="fg"><label>Your name / ID <span class="req">*</span></label><input type="text" id="c-created-by" placeholder="e.g. prince, john_d"></div>
+  <div class="fg"><label>Created by</label><input type="text" id="c-created-by" value="{{ username }}" readonly style="background:var(--bg);cursor:default;"></div>
   <div class="fg"><label>Tags <span style="color:var(--muted)">(comma separated)</span></label><input type="text" id="c-tags" placeholder="electronics, gifts"></div>
   <div class="fg"><label>Category</label><input type="text" id="c-category" placeholder="e.g. Electronics, Travel"></div>
   <div class="fg"><label>Check interval (min)</label><input type="number" id="c-interval" value="60" min="1" max="1440"></div>
@@ -274,26 +386,9 @@ details .inner{margin-top:.85rem;}
 
   <div id="fields-product">
     <div class="fg"><label>URL <span class="req">*</span></label><input type="url" id="c-url"></div>
+    <div class="hint" style="margin-top:-.4rem;margin-bottom:.7rem">Supports Amazon, Flipkart, and most e-commerce sites. Just paste the product link.</div>
     <div class="fg"><label>Budget <span class="req">*</span></label><input type="text" id="c-budget"></div>
-    <div class="fg"><label>CSS selector <span style="color:var(--muted)">(optional)</span></label><input type="text" id="c-selector"></div>
     <div class="fg"><label>Monitor until <span style="color:var(--muted)">(optional)</span></label><input type="text" id="c-until" placeholder="YYYY-MM-DD"></div>
-  </div>
-
-  <div id="fields-train" style="display:none">
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem">
-      <div class="fg"><label>Train number <span class="req">*</span></label><input type="text" id="c-tnum"></div>
-      <div class="fg"><label>Train name</label><input type="text" id="c-tname"></div>
-    </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem">
-      <div class="fg"><label>From station <span class="req">*</span></label><input type="text" id="c-from" placeholder="NDLS"></div>
-      <div class="fg"><label>To station <span class="req">*</span></label><input type="text" id="c-to" placeholder="CNB"></div>
-    </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:.5rem">
-      <div class="fg"><label>Travel date <span class="req">*</span></label><input type="text" id="c-date" placeholder="YYYY-MM-DD"></div>
-      <div class="fg"><label>Class</label><select id="c-class"><option value="1A">1A</option><option value="2A">2A</option><option value="3A">3A</option><option value="SL" selected>SL</option><option value="CC">CC</option><option value="2S">2S</option></select></div>
-      <div class="fg"><label>Quota</label><select id="c-quota"><option value="GN" selected>GN</option><option value="TQ">TQ</option></select></div>
-    </div>
-    <div class="fg"><label>Fare budget <span style="color:var(--muted)">(optional)</span></label><input type="text" id="c-fbudget"></div>
   </div>
 
   <div id="fields-flight" style="display:none">
@@ -330,10 +425,16 @@ details .inner{margin-top:.85rem;}
 
 <script>
 const $=id=>document.getElementById(id);
+const _role='{{ role }}';
+const _username='{{ username }}';
+const _primaryAdmin='{{ primary_admin }}';
+const _isPrimaryAdmin=_username===_primaryAdmin;
+const _isAdmin=_role==='admin';
 let evtSource=null;
 
 function toast(m,ok=true){const t=$('toast');t.textContent=m;t.className='toast '+(ok?'toast-ok':'toast-err')+' show';clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),3500);}
 async function api(url,body){const opts=body!==undefined?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{};if(body===null)opts.method='DELETE';const r=await fetch(url,opts);return r.json();}
+function esc(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML.replace(/'/g,'&#39;');}
 
 /* Theme */
 function toggleTheme(){const h=document.documentElement;const d=h.getAttribute('data-theme')==='dark'?'light':'dark';h.setAttribute('data-theme',d);localStorage.setItem('theme',d);}
@@ -343,69 +444,321 @@ function toggleTheme(){const h=document.documentElement;const d=h.getAttribute('
 function toggleAlertFields(){$('fg-drop-pct').style.display=$('c-alert-mode').value==='drop_percent'?'':'none';}
 
 /* Modal */
-function openCreate(type){$('c-type').value=type;toggleFields();$('c-name').value='';$('c-created-by').value=localStorage.getItem('pm_user')||'';$('c-tags').value='';$('c-category').value='';$('c-interval').value='60';$('c-alert-mode').value='budget';$('c-drop-pct').value='10';$('c-comp-group').value='';toggleAlertFields();$('c-url').value='';$('c-budget').value='';$('c-selector').value='';$('c-until').value='';$('c-tnum').value='';$('c-tname').value='';$('c-from').value='';$('c-to').value='';$('c-date').value='';$('c-fbudget').value='';$('c-forigin').value='';$('c-fdest').value='';$('c-fdate').value='';$('c-frdate').value='';$('c-fmaxprice').value='';$('c-fairline').value='';$('modal-title').textContent='New '+type.charAt(0).toUpperCase()+type.slice(1)+' Monitor';$('modal-create').classList.add('show');}
+function openCreate(type){$('c-type').value=type;toggleFields();$('c-name').value='';$('c-created-by').value=_username;$('c-tags').value='';$('c-category').value='';$('c-interval').value='60';$('c-alert-mode').value='budget';$('c-drop-pct').value='10';$('c-comp-group').value='';toggleAlertFields();$('c-url').value='';$('c-budget').value='';$('c-until').value='';$('c-forigin').value='';$('c-fdest').value='';$('c-fdate').value='';$('c-frdate').value='';$('c-fmaxprice').value='';$('c-fairline').value='';$('modal-title').textContent='New '+type.charAt(0).toUpperCase()+type.slice(1)+' Monitor';$('modal-create').classList.add('show');}
 function closeModal(){$('modal-create').classList.remove('show');}
-function toggleFields(){const t=$('c-type').value;$('fields-product').style.display=t==='product'?'':'none';$('fields-train').style.display=t==='train'?'':'none';$('fields-flight').style.display=t==='flight'?'':'none';}
+function toggleFields(){const t=$('c-type').value;$('fields-product').style.display=t==='product'?'':'none';$('fields-flight').style.display=t==='flight'?'':'none';}
 
 async function submitCreate(){
   const t=$('c-type').value;
-  const createdBy=$('c-created-by').value.trim();
-  if(!createdBy){toast('Please enter your name / ID',false);return;}
+  const createdBy=$('c-created-by').value.trim()||_username;
   const base={type:t,name:$('c-name').value,created_by:createdBy,tags:$('c-tags').value,category:$('c-category').value,check_interval_min:parseInt($('c-interval').value)||60,alert_mode:$('c-alert-mode').value,alert_drop_percent:$('c-drop-pct').value||null,comparison_group:$('c-comp-group').value};
   let d;
-  if(t==='product') d={...base,url:$('c-url').value,budget:$('c-budget').value,price_selector:$('c-selector').value,monitor_until:$('c-until').value};
-  else if(t==='train') d={...base,train_number:$('c-tnum').value,train_name:$('c-tname').value,from_station:$('c-from').value,to_station:$('c-to').value,travel_date:$('c-date').value,class_code:$('c-class').value,quota:$('c-quota').value,fare_budget:$('c-fbudget').value};
+  if(t==='product') d={...base,url:$('c-url').value,budget:$('c-budget').value,monitor_until:$('c-until').value};
   else d={...base,flight_origin:$('c-forigin').value,flight_destination:$('c-fdest').value,flight_date:$('c-fdate').value,flight_return_date:$('c-frdate').value,flight_max_price:$('c-fmaxprice').value,flight_airline_pref:$('c-fairline').value};
   const r=await api('/api/monitors',d);
-  if(r.ok){localStorage.setItem('pm_user',createdBy);toast('Monitor created');closeModal();location.reload();}else toast(r.error||'Failed',false);
+  if(r.ok){toast('Monitor created');closeModal();location.reload();}else toast(r.error||'Failed',false);
 }
 
 /* Actions */
-async function checkMon(id,btn){btn.disabled=true;btn.textContent='...';const r=await fetch('/api/monitors/'+id+'/check',{method:'POST'});const j=await r.json();j.ok?toast('Check complete'):toast(j.error||'Failed',false);btn.disabled=false;btn.textContent='Check';poll();}
-async function pauseMon(id){await fetch('/api/monitors/'+id+'/pause',{method:'POST'});toast('Paused');location.reload();}
-async function resumeMon(id){await fetch('/api/monitors/'+id+'/resume',{method:'POST'});toast('Resumed');location.reload();}
-async function dupMon(id){const r=await fetch('/api/monitors/'+id+'/duplicate',{method:'POST'});const j=await r.json();j.ok?toast('Duplicated'):toast(j.error||'Failed',false);location.reload();}
-async function delMon(id,name){if(!confirm('Delete monitor "'+name+'"?'))return;await fetch('/api/monitors/'+id,{method:'DELETE'});toast('Deleted');location.reload();}
+async function checkMon(id,btn){if(!confirm('Run a price check now?'))return;btn.disabled=true;btn.textContent='...';const r=await fetch('/api/monitors/'+id+'/check',{method:'POST'});const j=await r.json();j.ok?toast('Check complete'):toast(j.error||'Failed',false);btn.disabled=false;btn.textContent='Check';if(typeof poll==='function')poll();}
+async function pauseMon(id){if(!confirm('Pause this monitor? It will stop checking prices until you resume it.'))return;await fetch('/api/monitors/'+id+'/pause',{method:'POST'});toast('Paused');location.reload();}
+async function resumeMon(id){if(!confirm('Resume this monitor? It will start checking prices again.'))return;await fetch('/api/monitors/'+id+'/resume',{method:'POST'});toast('Resumed');location.reload();}
+async function delMon(id,name){if(!confirm('Delete monitor "'+name+'"? This cannot be undone.'))return;await fetch('/api/monitors/'+id,{method:'DELETE'});toast('Deleted');location.reload();}
+
+/* Notifications */
+function ndata(){const d={desktop:false,ntfy_topic:$('n-ntfy-topic').value,ntfy_server:$('n-ntfy-server').value||'https://ntfy.sh',smtp_to:$('n-smtp-to').value};if($('n-smtp-host')){d.smtp_host=$('n-smtp-host').value;d.smtp_port=parseInt($('n-smtp-port').value)||587;d.smtp_user=$('n-smtp-user').value;d.smtp_pass=$('n-smtp-pass').value;d.smtp_from=$('n-smtp-from').value;}return d;}
+async function saveNotify(){const r=await api('/api/notifications',ndata());toast(r.ok?'Saved':'Failed',r.ok);}
+async function testNotify(){const r=await api('/api/notifications/test',ndata());toast(r.ok?'Test sent!':'Test failed',r.ok);}
+async function loadNotify(){try{const r=await(await fetch('/api/notifications')).json();const s=r.settings||{};$('n-ntfy-topic').value=s.ntfy_topic||'';$('n-ntfy-server').value=s.ntfy_server||'https://ntfy.sh';$('n-smtp-to').value=s.smtp_to||'';if($('n-smtp-host')){$('n-smtp-host').value=s.smtp_host||'';$('n-smtp-port').value=s.smtp_port||587;$('n-smtp-user').value=s.smtp_user||'';$('n-smtp-pass').value=s.smtp_pass||'';$('n-smtp-from').value=s.smtp_from||'';}}catch(e){}}
+
+/* Self-Delete Account */
+function openSelfDelete(){
+  if($('sd-password'))$('sd-password').value='';
+  $('modal-self-delete').classList.add('show');
+}
+async function submitSelfDelete(){
+  const pw=$('sd-password').value;
+  if(!pw){toast('Please enter your password',false);return;}
+  if(!confirm('This will PERMANENTLY delete your account and ALL your monitors.\n\nThis action CANNOT be undone.\n\nAre you absolutely sure?'))return;
+  const r=await api('/api/users/self-delete',{password:pw});
+  if(r.ok){
+    toast('Account deleted. Redirecting...');
+    setTimeout(()=>window.location.href=r.redirect||'/login',1500);
+  }else toast(r.error||'Failed',false);
+}
+
+/* Change own password */
+async function submitChangePw(){
+  const cur=$('cp-current');
+  const np=$('cp-new');
+  const nc=$('cp-confirm');
+  if(!cur||!np||!nc)return;
+  if(!cur.value){toast('Enter your current password',false);return;}
+  if(np.value.length<8){toast('New password must be at least 8 characters',false);return;}
+  if(np.value!==nc.value){toast('New passwords do not match',false);return;}
+  if(!confirm('Are you sure you want to change your password?'))return;
+  const r=await api('/api/users/self/change-password',{current_password:cur.value,new_password:np.value,confirm_password:nc.value});
+  if(r.ok){toast('Password changed successfully');cur.value='';np.value='';nc.value='';}
+  else toast(r.error||'Failed',false);
+}
+
+/* Polling */
+async function poll(){try{const r=await(await fetch('/api/status')).json();const lg=$('log');if(lg)lg.textContent=r.logs&&r.logs.length?r.logs.join('\n'):'No activity yet.';const b=$('badge-mon');if(b){b.textContent=r.monitoring?'Monitoring':'Idle';b.className='badge '+(r.monitoring?'b-active':'b-paused');}if($('btn-start')){$('btn-start').style.display=r.monitoring?'none':'';$('btn-start').disabled=r.active===0;}if($('btn-stop'))$('btn-stop').style.display=r.monitoring?'':'none';$('st-total').textContent=r.total;$('st-active').textContent=r.active;$('st-paused').textContent=r.paused;if($('st-expired'))$('st-expired').textContent=r.expired;}catch(e){}}
+
+loadNotify();
+$('modal-create').addEventListener('click',e=>{if(e.target===$('modal-create'))closeModal();});
+if($('modal-self-delete'))$('modal-self-delete').addEventListener('click',e=>{if(e.target===$('modal-self-delete'))$('modal-self-delete').classList.remove('show');});
+
+{% if role == 'admin' %}
+/* ════════════ ADMIN-ONLY JS ════════════ */
 
 /* Bulk */
 function toggleAll(el){document.querySelectorAll('.sel-cb').forEach(c=>c.checked=el.checked);updateBulk();}
 function updateBulk(){const sel=document.querySelectorAll('.sel-cb:checked');$('bulk-count').textContent=sel.length+' selected';$('bulk-bar').classList.toggle('show',sel.length>0);}
-async function bulkAction(action){const ids=[...document.querySelectorAll('.sel-cb:checked')].map(c=>c.value);if(!ids.length)return;if(action==='delete'&&!confirm('Delete '+ids.length+' monitors?'))return;const r=await api('/api/monitors/batch/'+action,{ids});toast(r.ok?action+' done':'Failed',r.ok);location.reload();}
+async function bulkAction(action){const ids=[...document.querySelectorAll('.sel-cb:checked')].map(c=>c.value);if(!ids.length)return;if(!confirm(action.charAt(0).toUpperCase()+action.slice(1)+' '+ids.length+' monitor(s)?'))return;const r=await api('/api/monitors/batch/'+action,{ids});toast(r.ok?action+' done':'Failed',r.ok);location.reload();}
+
+/* Duplicate */
+async function dupMon(id){if(!confirm('Duplicate this monitor?'))return;const r=await fetch('/api/monitors/'+id+'/duplicate',{method:'POST'});const j=await r.json();j.ok?toast('Duplicated'):toast(j.error||'Failed',false);location.reload();}
 
 /* Import/Export */
 function exportAll(){window.location='/api/monitors/export-all';}
 async function importFile(input){if(!input.files.length)return;const text=await input.files[0].text();try{const data=JSON.parse(text);const r=await api('/api/monitors/import',data);toast(r.ok?'Imported '+r.count+' monitors':'Failed',r.ok);location.reload();}catch(e){toast('Invalid JSON file',false);}}
 
 /* Monitor loop */
-async function startLoop(){const r=await api('/api/monitor/start',{});r.ok?toast('Monitoring started'):toast(r.error||'Failed',false);poll();}
-async function stopLoop(){await api('/api/monitor/stop',{});toast('Stopped');poll();}
+async function startLoop(){
+  const r=await api('/api/monitor/start',{});
+  if(r.ok){toast('Monitoring started');$('btn-start').style.display='none';$('btn-stop').style.display='';}
+  else toast(r.error||'Failed',false);
+  poll();
+}
+async function stopLoop(){
+  if(!confirm('Are you sure you want to stop monitoring all active monitors?'))return;
+  await api('/api/monitor/stop',{});
+  toast('Monitoring stopped');
+  $('btn-stop').style.display='none';$('btn-start').style.display='';
+  poll();
+}
 
 /* Digest */
 async function sendDigest(){const r=await api('/api/digest/send',{});toast(r.ok?'Digest sent':'Failed',r.ok);}
 
-/* Notifications */
-function ndata(){return{desktop:false,ntfy_topic:$('n-ntfy-topic').value,ntfy_server:$('n-ntfy-server').value||'https://ntfy.sh',telegram_bot_token:$('n-tg-token').value,telegram_chat_id:$('n-tg-chat').value,webhook_url:$('n-webhook').value,callmebot_phone:$('n-cm-phone').value,callmebot_apikey:$('n-cm-key').value,smtp_host:$('n-smtp-host').value,smtp_port:parseInt($('n-smtp-port').value)||587,smtp_user:$('n-smtp-user').value,smtp_pass:$('n-smtp-pass').value,smtp_from:$('n-smtp-from').value,smtp_to:$('n-smtp-to').value};}
-async function saveNotify(){const r=await api('/api/notifications',ndata());toast(r.ok?'Saved':'Failed',r.ok);}
-async function testNotify(){const r=await api('/api/notifications/test',ndata());toast(r.ok?'Test sent!':'Test failed',r.ok);}
-async function loadNotify(){try{const r=await(await fetch('/api/notifications')).json();const s=r.settings||{};$('n-ntfy-topic').value=s.ntfy_topic||'';$('n-ntfy-server').value=s.ntfy_server||'https://ntfy.sh';$('n-tg-token').value=s.telegram_bot_token||'';$('n-tg-chat').value=s.telegram_chat_id||'';$('n-webhook').value=s.webhook_url||'';$('n-cm-phone').value=s.callmebot_phone||'';$('n-cm-key').value=s.callmebot_apikey||'';$('n-smtp-host').value=s.smtp_host||'';$('n-smtp-port').value=s.smtp_port||587;$('n-smtp-user').value=s.smtp_user||'';$('n-smtp-pass').value=s.smtp_pass||'';$('n-smtp-from').value=s.smtp_from||'';$('n-smtp-to').value=s.smtp_to||'';}catch(e){}}
-
-/* SSE + Polling fallback */
+/* SSE */
 function initSSE(){
   if(evtSource)evtSource.close();
   try{
     evtSource=new EventSource('/api/stream');
-    evtSource.onmessage=function(e){try{const d=JSON.parse(e.data);if(d.type==='log'){const el=$('log');el.textContent=d.message+'\n'+el.textContent;}}catch(ex){}};
+    evtSource.onmessage=function(e){try{const d=JSON.parse(e.data);if(d.type==='log'){const el=$('log');if(el)el.textContent=d.message+'\n'+el.textContent;}}catch(ex){}};
     evtSource.onerror=function(){evtSource.close();evtSource=null;};
   }catch(e){}
 }
 
-async function poll(){try{const r=await(await fetch('/api/status')).json();$('log').textContent=r.logs&&r.logs.length?r.logs.join('\n'):'No activity yet.';const b=$('badge-mon');b.textContent=r.monitoring?'Monitoring':'Idle';b.className='badge '+(r.monitoring?'b-active':'b-paused');}catch(e){}}
+/* Debug Log */
+async function loadDebugLog(){try{const lvl=$('dbg-level').value;const n=$('dbg-lines').value;const url='/api/logs?lines='+n+(lvl?'&level='+lvl:'');const r=await(await fetch(url)).json();if(r.ok){$('dbg-log').textContent=r.lines.join('\n')||'No log entries.';$('dbg-count').textContent=r.total+' total entries'+(lvl?' (filtered: '+lvl+')':'');}else{$('dbg-log').textContent='Error loading logs.';}}catch(e){$('dbg-log').textContent='Error: '+e.message;}}
+
+/* ── User Management ── */
+let _users=[];
+let _usersLoaded=false;
+async function loadUsers(){
+  try{
+    const r=await(await fetch('/api/users')).json();
+    _users=r.users||[];
+    _usersLoaded=true;
+    $('user-count').textContent=_users.length+' user(s)';
+    const tb=$('users-tbody');
+    if(!_users.length){tb.innerHTML='<tr><td colspan="6" class="empty">No users registered.</td></tr>';return;}
+    tb.innerHTML=_users.map(u=>{
+      const isPrimary=u.username===_primaryAdmin;
+      const isSelf=u.username===_username;
+      let roleCell='';
+      if(isPrimary){
+        roleCell='<span class="badge b-active">admin</span>';
+      }else if(_isPrimaryAdmin){
+        const roleOpts=['viewer','admin'].map(r=>'<option value="'+r+'"'+(r===u.role?' selected':'')+'>'+r+'</option>').join('');
+        roleCell='<select onchange="changeRole(\''+u.id+'\',this.value,\''+esc(u.username)+'\')" style="font-size:.78rem;padding:.2rem .4rem;width:auto;">'+roleOpts+'</select>';
+      }else{
+        roleCell='<span class="badge '+(u.role==='admin'?'b-active':'b-paused')+'">'+u.role+'</span>';
+      }
+      let actions='';
+      if(isPrimary){
+        /* primary admin - no actions */
+      }else if(isSelf){
+        actions='<span class="hint" style="font-size:.72rem">Manage in Account section</span>';
+      }else{
+        actions='<button class="btn bo" onclick="openResetPw(\''+u.id+'\',\''+esc(u.username)+'\')">Reset PW</button>';
+        if(_isPrimaryAdmin){
+          actions+='<button class="btn bd" onclick="deleteUser(\''+u.id+'\',\''+esc(u.username)+'\','+u.monitor_count+')">Delete</button>';
+        }else{
+          actions+='<button class="btn bw" onclick="requestDeleteUser(\''+u.id+'\',\''+esc(u.username)+'\','+u.monitor_count+')">Request Delete</button>';
+        }
+      }
+      return '<tr>'+
+        '<td><strong>'+esc(u.username)+(isSelf?' <span style="font-size:.65rem;color:var(--muted)">(you)</span>':'')+'</strong></td>'+
+        '<td>'+roleCell+'</td>'+
+        '<td style="font-size:.75rem">'+(u.created_at?u.created_at.slice(0,10):'—')+'</td>'+
+        '<td style="text-align:center">'+(u.monitor_count||0)+'</td>'+
+        '<td style="text-align:center">'+(u.active_monitors||0)+'</td>'+
+        '<td><div class="actions">'+actions+'</div></td></tr>';
+    }).join('');
+    if(_isPrimaryAdmin) loadPendingRequests();
+    else loadMyRequests();
+  }catch(e){toast('Failed to load users',false);}
+}
+
+/* Auto-load users when User Management is opened */
+(function(){
+  const det=$('user-mgmt-details');
+  if(det){det.addEventListener('toggle',function(){if(det.open&&!_usersLoaded)loadUsers();});}
+})();
+
+/* Role change (primary admin only) */
+async function changeRole(uid,role,uname){
+  if(role==='admin'){
+    if(!confirm('WARNING: You are about to make "'+uname+'" an admin.\n\nAdmins can manage all users, monitors, and settings.\n\nAre you sure?'))
+    {loadUsers();return;}
+  }else{
+    if(!confirm('Change role of "'+uname+'" to "'+role+'"?'))
+    {loadUsers();return;}
+  }
+  const r=await api('/api/users/'+uid+'/role',{role});
+  if(r.ok){toast('Role updated to '+role);loadUsers();}else toast(r.error||'Failed',false);
+}
+
+/* Password Reset (admin resetting another user's password) */
+let _resetUid='';
+function openResetPw(uid,uname){
+  _resetUid=uid;
+  $('rp-username').textContent=uname;
+  $('rp-password').value='';$('rp-confirm').value='';
+  $('modal-reset-pw').classList.add('show');
+}
+async function submitResetPw(){
+  const pw=$('rp-password').value;const pw2=$('rp-confirm').value;
+  if(pw.length<8){toast('Password must be at least 8 characters',false);return;}
+  if(pw!==pw2){toast('Passwords do not match',false);return;}
+  if(!confirm('Are you sure you want to reset the password for "'+$('rp-username').textContent+'"?'))return;
+  const r=await api('/api/users/'+_resetUid+'/reset-password',{password:pw});
+  if(r.ok){toast('Password reset successfully');$('modal-reset-pw').classList.remove('show');}
+  else toast(r.error||'Failed',false);
+}
+$('modal-reset-pw').addEventListener('click',e=>{if(e.target===$('modal-reset-pw'))$('modal-reset-pw').classList.remove('show');});
+
+/* Delete User (primary admin - direct delete) */
+async function deleteUser(uid,uname,monCount){
+  monCount=monCount||0;
+  let msg='Are you sure you want to permanently delete user "'+uname+'"?\n\n';
+  if(monCount>0) msg+='WARNING: This user has '+monCount+' monitor(s) that will also be permanently deleted.\n\n';
+  msg+='This action CANNOT be undone.';
+  if(!confirm(msg))return;
+  if(!confirm('FINAL CONFIRMATION: Delete "'+uname+'" permanently?'))return;
+  const r=await fetch('/api/users/'+uid,{method:'DELETE'});const j=await r.json();
+  if(j.ok){toast('User deleted');loadUsers();}
+  else toast(j.error||'Failed to delete user',false);
+}
+
+/* Request Delete User (secondary admin) */
+async function requestDeleteUser(uid,uname,monCount){
+  let msg='';
+  if(monCount>0) msg='Note: User "'+uname+'" has '+monCount+' monitor(s) that will be deleted if approved.\n\n';
+  msg+='A deletion request for "'+uname+'" will be sent to the primary admin for approval.\n\nContinue?';
+  if(!confirm(msg))return;
+  const r=await fetch('/api/users/'+uid,{method:'DELETE'});const j=await r.json();
+  if(j.ok && j.request_submitted){toast('Deletion request submitted to primary admin');loadUsers();}
+  else if(j.ok){toast('User deleted');loadUsers();}
+  else toast(j.error||'Failed',false);
+}
+
+/* Pending Deletion Requests (primary admin only) */
+async function loadPendingRequests(){
+  const el=$('pending-requests');
+  if(!el)return;
+  try{
+    const r=await(await fetch('/api/delete-requests')).json();
+    const reqs=r.requests||[];
+    if(!reqs.length){el.innerHTML='<p class="hint">No pending requests.</p>';return;}
+    let html='<table style="font-size:.8rem;margin-top:.5rem"><thead><tr><th>User to delete</th><th>Requested by</th><th>Monitors</th><th>Date</th><th>Actions</th></tr></thead><tbody>';
+    reqs.forEach(rq=>{
+      html+='<tr><td><strong>'+esc(rq.target_username)+'</strong></td><td>'+esc(rq.requested_by)+'</td><td style="text-align:center">'+(rq.monitor_count||0)+'</td><td style="font-size:.75rem">'+(rq.created_at?rq.created_at.slice(0,10):'—')+'</td><td><div class="actions"><button class="btn bs" onclick="approveDeleteReq(\''+rq.id+'\',\''+esc(rq.target_username)+'\')">Approve</button><button class="btn bo" onclick="rejectDeleteReq(\''+rq.id+'\',\''+esc(rq.target_username)+'\')">Reject</button></div></td></tr>';
+    });
+    html+='</tbody></table>';
+    el.innerHTML=html;
+  }catch(e){el.innerHTML='<p class="hint">Failed to load requests.</p>';}
+}
+async function approveDeleteReq(reqId,uname){
+  if(!confirm('Approve deletion of "'+uname+'"?\n\nThis will permanently delete the user and all their monitors. This cannot be undone.'))return;
+  const r=await api('/api/delete-requests/'+reqId+'/approve',{});
+  if(r.ok){toast('User "'+uname+'" deleted');loadUsers();checkPendingBadge();}
+  else toast(r.error||'Failed',false);
+}
+async function rejectDeleteReq(reqId,uname){
+  if(!confirm('Reject the deletion request for "'+uname+'"?'))return;
+  const r=await api('/api/delete-requests/'+reqId+'/reject',{});
+  if(r.ok){toast('Request rejected');loadUsers();checkPendingBadge();}
+  else toast(r.error||'Failed',false);
+}
+
+/* My Deletion Requests (secondary admin) - table rendering */
+async function loadMyRequests(){
+  const el=$('my-requests');
+  if(!el)return;
+  try{
+    const r=await(await fetch('/api/delete-requests/mine')).json();
+    const reqs=r.requests||[];
+    if(!reqs.length){el.innerHTML='<p class="hint">You have not submitted any deletion requests.</p>';return;}
+    let html='<table style="font-size:.8rem;margin-top:.5rem"><thead><tr><th>User</th><th>Submitted</th><th>Status</th><th>Resolved</th></tr></thead><tbody>';
+    reqs.forEach(rq=>{
+      let statusBadge='';
+      if(rq.status==='pending') statusBadge='<span class="badge b-paused">Pending</span>';
+      else if(rq.status==='approved') statusBadge='<span class="badge b-active">Approved</span>';
+      else if(rq.status==='rejected') statusBadge='<span class="badge" style="background:#fee2e2;color:#991b1b">Rejected</span>';
+      else statusBadge='<span class="badge b-expired">'+rq.status+'</span>';
+      html+='<tr><td><strong>'+esc(rq.target_username)+'</strong></td><td style="font-size:.75rem">'+(rq.created_at?rq.created_at.slice(0,10):'—')+'</td><td>'+statusBadge+'</td><td style="font-size:.75rem">'+(rq.resolved_at?rq.resolved_at.slice(0,10):'—')+'</td></tr>';
+    });
+    html+='</tbody></table>';
+    el.innerHTML=html;
+  }catch(e){el.innerHTML='<p class="hint">Failed to load requests.</p>';}
+}
+
+/* Check for resolved requests and notify on page load (secondary admin) */
+async function checkMyRequestNotifications(){
+  if(_isPrimaryAdmin)return;
+  try{
+    const r=await(await fetch('/api/delete-requests/mine')).json();
+    const reqs=r.requests||[];
+    const toAck=reqs.filter(rq=>rq.status!=='pending'&&!rq.acknowledged);
+    if(!toAck.length)return;
+    toAck.forEach(rq=>{
+      const action=rq.status==='approved'?'approved (user deleted)':'rejected';
+      toast('Your request to delete "'+rq.target_username+'" was '+action,rq.status==='approved');
+    });
+    await api('/api/delete-requests/mine/ack',{ids:toAck.map(r=>r.id)});
+  }catch(e){}
+}
+
+/* Pending requests badge */
+async function checkPendingBadge(){
+  if(!_isPrimaryAdmin)return;
+  const badge=$('pending-badge');
+  if(!badge)return;
+  try{
+    const r=await(await fetch('/api/delete-requests/count')).json();
+    const c=r.count||0;
+    if(c>0){badge.textContent=c+' pending request'+(c>1?'s':'');badge.style.display='inline';}
+    else{badge.style.display='none';}
+  }catch(e){}
+}
+
+/* Admin polling & init */
 setInterval(poll,8000);
-loadNotify();
 poll();
 initSSE();
-
-$('modal-create').addEventListener('click',e=>{if(e.target===$('modal-create'))closeModal();});
+if(_isPrimaryAdmin){
+  checkPendingBadge();
+  setInterval(checkPendingBadge,30000);
+}else{
+  checkMyRequestNotifications();
+  setInterval(checkMyRequestNotifications,30000);
+}
+{% endif %}
 </script>
 </body>
 </html>

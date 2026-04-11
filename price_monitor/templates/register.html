@@ -3,18 +3,17 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Login - Price Monitor</title>
+<title>Sign Up - Price Monitor</title>
 <link rel="manifest" href="/static/manifest.json">
 <meta name="theme-color" content="#4f46e5">
 <style>
 :root { --primary:#4f46e5; --primary-hover:#4338ca; --bg:#f1f5f9; --card:#fff; --text:#1e293b; --muted:#64748b; --border:#e2e8f0; --danger:#dc2626; --green:#16a34a; --radius:12px; }
 *,*::before,*::after { box-sizing:border-box; margin:0; padding:0; }
 body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; background:var(--bg); color:var(--text); min-height:100vh; display:flex; align-items:center; justify-content:center; padding:1rem; }
-.wrap { background:var(--card); border-radius:var(--radius); border:1px solid var(--border); padding:2.2rem 2rem; width:100%; max-width:400px; box-shadow:0 4px 24px rgba(0,0,0,.06); }
+.wrap { background:var(--card); border-radius:var(--radius); border:1px solid var(--border); padding:2.2rem 2rem; width:100%; max-width:420px; box-shadow:0 4px 24px rgba(0,0,0,.06); }
 h1 { font-size:1.5rem; margin-bottom:.25rem; text-align:center; }
 .subtitle { font-size:.85rem; color:var(--muted); margin-bottom:1.6rem; text-align:center; }
 .err { background:#fef2f2; color:var(--danger); padding:.55rem .8rem; border-radius:8px; font-size:.84rem; margin-bottom:1rem; text-align:center; }
-.success { background:#f0fdf4; color:var(--green); padding:.55rem .8rem; border-radius:8px; font-size:.84rem; margin-bottom:1rem; text-align:center; }
 label { display:block; font-size:.85rem; font-weight:500; margin-bottom:.3rem; color:var(--text); }
 input { width:100%; padding:.6rem .85rem; border:1px solid var(--border); border-radius:8px; font-size:.95rem; outline:none; transition:border-color .2s, box-shadow .2s; }
 input:focus { border-color:var(--primary); box-shadow:0 0 0 3px rgba(79,70,229,.12); }
@@ -28,33 +27,41 @@ button[type="submit"]:hover { background:var(--primary-hover); }
 .footer { text-align:center; margin-top:1.3rem; font-size:.84rem; color:var(--muted); }
 .footer a { color:var(--primary); text-decoration:none; font-weight:500; }
 .footer a:hover { text-decoration:underline; }
+.hint { font-size:.78rem; color:var(--muted); margin-top:.15rem; margin-bottom:.9rem; }
 </style>
 </head>
 <body>
 <div class="wrap">
-  <h1>Price Monitor</h1>
-  <p class="subtitle">Sign in to your account</p>
+  <h1>Create Account</h1>
+  <p class="subtitle">Sign up to view price monitors</p>
 
-  {% if registered %}<div class="success">Account created successfully! Please log in.</div>{% endif %}
   {% if error %}<div class="err">{{ error }}</div>{% endif %}
 
   <form method="POST">
     <div class="field">
       <label for="username">Username</label>
-      <input type="text" name="username" id="username" placeholder="Enter your username" autofocus required>
+      <input type="text" name="username" id="username" placeholder="Choose a username" autofocus required minlength="10" maxlength="30">
+      <p class="hint">10–30 characters. Letters, numbers, underscores, and @ only.</p>
     </div>
 
     <label for="password">Password</label>
     <div class="pw-wrap">
-      <input type="password" name="password" id="password" placeholder="Enter your password" required>
+      <input type="password" name="password" id="password" placeholder="Choose a password" required minlength="8">
       <span class="pw-toggle" tabindex="-1" onclick="togglePw('password', this)">&#128065;</span>
     </div>
+    <p class="hint" style="margin-top:-.5rem;">Minimum 8 characters.</p>
 
-    <button type="submit">Log in</button>
+    <label for="confirm_password">Confirm Password</label>
+    <div class="pw-wrap">
+      <input type="password" name="confirm_password" id="confirm_password" placeholder="Re-enter your password" required>
+      <span class="pw-toggle" tabindex="-1" onclick="togglePw('confirm_password', this)">&#128065;</span>
+    </div>
+
+    <button type="submit">Create Account</button>
   </form>
 
   <div class="footer">
-    Don't have an account? <a href="/register">Sign up</a>
+    Already have an account? <a href="/login">Log in</a>
   </div>
 </div>
 
