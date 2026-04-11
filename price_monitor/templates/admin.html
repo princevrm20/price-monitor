@@ -124,6 +124,7 @@ details .inner{margin-top:.85rem;}
     <select name="status"><option value="">All statuses</option><option value="active" {{ 'selected' if filt_status=='active' }}>Active</option><option value="paused" {{ 'selected' if filt_status=='paused' }}>Paused</option><option value="completed" {{ 'selected' if filt_status=='completed' }}>Completed</option><option value="expired" {{ 'selected' if filt_status=='expired' }}>Expired</option></select>
     <select name="category"><option value="">All categories</option>{% for c in categories %}<option value="{{ c }}" {{ 'selected' if filt_category==c }}>{{ c }}</option>{% endfor %}</select>
     <select name="tag"><option value="">All tags</option>{% for t in all_tags %}<option value="{{ t }}" {{ 'selected' if filt_tag==t }}>{{ t }}</option>{% endfor %}</select>
+    <select name="creator"><option value="">All creators</option>{% for c in creators %}<option value="{{ c }}" {{ 'selected' if filt_creator==c }}>{{ c }}</option>{% endfor %}</select>
     <button type="submit" class="btn bo">Filter</button>
     <a href="/" class="btn bo">Clear</a>
   </form>
@@ -133,7 +134,7 @@ details .inner{margin-top:.85rem;}
   <table>
     <thead><tr>
       {% if role == 'admin' %}<th><input type="checkbox" id="sel-all" onchange="toggleAll(this)"></th>{% endif %}
-      <th>Name</th><th>Type</th><th>Status</th><th>Last Value</th><th>Last Check</th><th>Tags</th>
+      <th>Name</th><th>Type</th><th>Status</th><th>Last Value</th><th>Last Check</th><th>Created by</th><th>Tags</th>
       {% if role == 'admin' %}<th>Actions</th>{% endif %}
     </tr></thead>
     <tbody>
@@ -164,6 +165,7 @@ details .inner{margin-top:.85rem;}
         {% endif %}
       </td>
       <td style="font-size:.78rem">{{ mlc[:19] if mlc else '—' }}</td>
+      <td style="font-size:.8rem">{{ m.get('created_by','') or '—' }}</td>
       <td>{% for tag in (m.get('tags') or []) %}<span class="tag">{{ tag }}</span>{% endfor %}{% if not m.get('tags') and m.get('category') %}<span class="tag">{{ m.category }}</span>{% endif %}</td>
       {% if role == 'admin' %}
       <td>
@@ -260,6 +262,7 @@ details .inner{margin-top:.85rem;}
   <h2 id="modal-title">New Monitor</h2>
   <div class="fg"><label>Type</label><select id="c-type" onchange="toggleFields()"><option value="product">Product</option><option value="train">Train</option><option value="flight">Flight</option></select></div>
   <div class="fg"><label>Name <span class="req">*</span></label><input type="text" id="c-name"></div>
+  <div class="fg"><label>Your name / ID <span class="req">*</span></label><input type="text" id="c-created-by" placeholder="e.g. prince, john_d"></div>
   <div class="fg"><label>Tags <span style="color:var(--muted)">(comma separated)</span></label><input type="text" id="c-tags" placeholder="electronics, gifts"></div>
   <div class="fg"><label>Category</label><input type="text" id="c-category" placeholder="e.g. Electronics, Travel"></div>
   <div class="fg"><label>Check interval (min)</label><input type="number" id="c-interval" value="60" min="1" max="1440"></div>
@@ -340,19 +343,21 @@ function toggleTheme(){const h=document.documentElement;const d=h.getAttribute('
 function toggleAlertFields(){$('fg-drop-pct').style.display=$('c-alert-mode').value==='drop_percent'?'':'none';}
 
 /* Modal */
-function openCreate(type){$('c-type').value=type;toggleFields();$('c-name').value='';$('c-tags').value='';$('c-category').value='';$('c-interval').value='60';$('c-alert-mode').value='budget';$('c-drop-pct').value='10';$('c-comp-group').value='';toggleAlertFields();$('c-url').value='';$('c-budget').value='';$('c-selector').value='';$('c-until').value='';$('c-tnum').value='';$('c-tname').value='';$('c-from').value='';$('c-to').value='';$('c-date').value='';$('c-fbudget').value='';$('c-forigin').value='';$('c-fdest').value='';$('c-fdate').value='';$('c-frdate').value='';$('c-fmaxprice').value='';$('c-fairline').value='';$('modal-title').textContent='New '+type.charAt(0).toUpperCase()+type.slice(1)+' Monitor';$('modal-create').classList.add('show');}
+function openCreate(type){$('c-type').value=type;toggleFields();$('c-name').value='';$('c-created-by').value=localStorage.getItem('pm_user')||'';$('c-tags').value='';$('c-category').value='';$('c-interval').value='60';$('c-alert-mode').value='budget';$('c-drop-pct').value='10';$('c-comp-group').value='';toggleAlertFields();$('c-url').value='';$('c-budget').value='';$('c-selector').value='';$('c-until').value='';$('c-tnum').value='';$('c-tname').value='';$('c-from').value='';$('c-to').value='';$('c-date').value='';$('c-fbudget').value='';$('c-forigin').value='';$('c-fdest').value='';$('c-fdate').value='';$('c-frdate').value='';$('c-fmaxprice').value='';$('c-fairline').value='';$('modal-title').textContent='New '+type.charAt(0).toUpperCase()+type.slice(1)+' Monitor';$('modal-create').classList.add('show');}
 function closeModal(){$('modal-create').classList.remove('show');}
 function toggleFields(){const t=$('c-type').value;$('fields-product').style.display=t==='product'?'':'none';$('fields-train').style.display=t==='train'?'':'none';$('fields-flight').style.display=t==='flight'?'':'none';}
 
 async function submitCreate(){
   const t=$('c-type').value;
-  const base={type:t,name:$('c-name').value,tags:$('c-tags').value,category:$('c-category').value,check_interval_min:parseInt($('c-interval').value)||60,alert_mode:$('c-alert-mode').value,alert_drop_percent:$('c-drop-pct').value||null,comparison_group:$('c-comp-group').value};
+  const createdBy=$('c-created-by').value.trim();
+  if(!createdBy){toast('Please enter your name / ID',false);return;}
+  const base={type:t,name:$('c-name').value,created_by:createdBy,tags:$('c-tags').value,category:$('c-category').value,check_interval_min:parseInt($('c-interval').value)||60,alert_mode:$('c-alert-mode').value,alert_drop_percent:$('c-drop-pct').value||null,comparison_group:$('c-comp-group').value};
   let d;
   if(t==='product') d={...base,url:$('c-url').value,budget:$('c-budget').value,price_selector:$('c-selector').value,monitor_until:$('c-until').value};
   else if(t==='train') d={...base,train_number:$('c-tnum').value,train_name:$('c-tname').value,from_station:$('c-from').value,to_station:$('c-to').value,travel_date:$('c-date').value,class_code:$('c-class').value,quota:$('c-quota').value,fare_budget:$('c-fbudget').value};
   else d={...base,flight_origin:$('c-forigin').value,flight_destination:$('c-fdest').value,flight_date:$('c-fdate').value,flight_return_date:$('c-frdate').value,flight_max_price:$('c-fmaxprice').value,flight_airline_pref:$('c-fairline').value};
   const r=await api('/api/monitors',d);
-  if(r.ok){toast('Monitor created');closeModal();location.reload();}else toast(r.error||'Failed',false);
+  if(r.ok){localStorage.setItem('pm_user',createdBy);toast('Monitor created');closeModal();location.reload();}else toast(r.error||'Failed',false);
 }
 
 /* Actions */

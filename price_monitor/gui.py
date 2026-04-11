@@ -120,6 +120,18 @@ class PriceMonitorApp(tk.Tk):
         ttk.Spinbox(row2, from_=1, to=1440, width=6, textvariable=self.interval_var).pack(side="left", padx=4)
         ttk.Label(row2, text="minutes").pack(side="left")
 
+        user_fr = ttk.Frame(self._container)
+        user_fr.pack(fill="x", **pad)
+        ttk.Label(user_fr, text="Your name / ID").pack(side="left")
+        tk.Label(user_fr, text=" *", fg="#c62828", font=("TkDefaultFont", 10, "bold")).pack(side="left")
+        self.user_var = tk.StringVar()
+        ttk.Entry(user_fr, textvariable=self.user_var, width=30).pack(side="left", padx=(8, 0))
+        ttk.Label(
+            user_fr,
+            text="(identifies who created this monitoring)",
+            font=("TkDefaultFont", 8),
+        ).pack(side="left", padx=(6, 0))
+
         btns = ttk.Frame(self._container)
         btns.pack(fill="x", **pad)
         ttk.Button(btns, text="Save product", command=self._on_save).pack(side="left", padx=(0, 8))
@@ -134,9 +146,15 @@ class PriceMonitorApp(tk.Tk):
         self.status_price.pack(anchor="w", padx=8, pady=(8, 2))
         self.status_time = ttk.Label(status_fr, text="Last check: —")
         self.status_time.pack(anchor="w", padx=8, pady=(0, 4))
+
+        log_btns = ttk.Frame(status_fr)
+        log_btns.pack(fill="x", padx=8, pady=(0, 2))
+        ttk.Button(log_btns, text="Clear output", command=self._clear_log).pack(side="right")
+
         self.log = scrolledtext.ScrolledText(status_fr, height=10, state="disabled", wrap="word")
         self.log.pack(fill="both", expand=True, padx=8, pady=(0, 8))
 
+        self._load_user_id()
         self._load_form_from_disk()
         self._load_notify_from_file()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -281,6 +299,26 @@ class PriceMonitorApp(tk.Tk):
         self.log.see("end")
         self.log.configure(state="disabled")
 
+    def _clear_log(self) -> None:
+        self.log.configure(state="normal")
+        self.log.delete("1.0", "end")
+        self.log.configure(state="disabled")
+
+    def _user_id_path(self) -> Path:
+        return self.items_path.parent / "user_id.txt"
+
+    def _load_user_id(self) -> None:
+        p = self._user_id_path()
+        if p.exists():
+            self.user_var.set(p.read_text(encoding="utf-8").strip())
+
+    def _save_user_id(self) -> None:
+        user = self.user_var.get().strip()
+        if user:
+            p = self._user_id_path()
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(user, encoding="utf-8")
+
     def _load_form_from_disk(self) -> None:
         items = load_items(self.items_path)
         if not items:
@@ -359,6 +397,7 @@ class PriceMonitorApp(tk.Tk):
             return
         self._item_id = item.id
         save_items([item], self.items_path)
+        self._save_user_id()
         self._log("Saved. This app tracks this one product only (replaces any previous list).")
 
     def _set_check_controls_busy(self, busy: bool) -> None:
@@ -491,6 +530,11 @@ class PriceMonitorApp(tk.Tk):
             self._start_monitor()
 
     def _start_monitor(self) -> None:
+        user = self.user_var.get().strip()
+        if not user:
+            messagebox.showwarning("Missing info", "Please enter your name or ID before starting monitoring.")
+            return
+
         existing = load_items(self.items_path)
         preserve = existing[0] if existing else None
         item = self._build_item_from_form(preserve)
@@ -506,12 +550,23 @@ class PriceMonitorApp(tk.Tk):
             mins = 60
         mins = max(1, min(1440, mins))
         self.interval_var.set(str(mins))
+
+        self._save_user_id()
+        self._clear_log()
         self._monitoring = True
         self.monitor_btn.configure(text="Stop monitoring")
+        self._log(f"--- New monitoring session ---")
+        self._log(f"User: {user}")
+        self._log(f"Product: {item.name}")
+        self._log(f"URL: {item.url}")
+        self._log(f"Budget: {item.budget:g}")
+        if item.price_selector:
+            self._log(f"Selector: {item.price_selector}")
+        if item.monitor_until_iso:
+            self._log(f"Monitor until: {item.monitor_until_iso}")
         self._log(
-            f"Monitoring every {mins} minutes. "
-            "Alert state was reset so you can get one budget notification again; "
-            "checks stop automatically once price is at or below budget and alerts are done."
+            f"Checking every {mins} minutes. "
+            "Alert state was reset so you can get one budget notification again."
         )
         self._run_monitor_once_then_reschedule()
 

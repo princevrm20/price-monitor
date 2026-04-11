@@ -132,14 +132,17 @@ def admin_dashboard():
     filt_status = request.args.get("status", "")
     filt_category = request.args.get("category", "")
     filt_tag = request.args.get("tag", "")
+    filt_creator = request.args.get("creator", "")
     monitors = list_monitors(
         monitor_type=filt_type or None,
         status=filt_status or None,
         category=filt_category or None,
         tag=filt_tag or None,
+        created_by=filt_creator or None,
     )
     all_monitors = list_monitors()
     categories = sorted({m.get("category", "") for m in all_monitors if m.get("category")})
+    creators = sorted({m.get("created_by", "") for m in all_monitors if m.get("created_by")})
     all_tags: set[str] = set()
     for m in all_monitors:
         for t in (m.get("tags") or []):
@@ -150,12 +153,14 @@ def admin_dashboard():
         "admin.html",
         monitors=monitors,
         categories=categories,
+        creators=creators,
         all_tags=sorted(all_tags),
         monitoring=_monitor_running,
         filt_type=filt_type,
         filt_status=filt_status,
         filt_category=filt_category,
         filt_tag=filt_tag,
+        filt_creator=filt_creator,
         logs=list(_global_log),
         role=session.get("role", "admin"),
         audit_entries=recent_audit,
@@ -205,7 +210,8 @@ def api_list_monitors():
     mtype = request.args.get("type")
     cat = request.args.get("category")
     tag = request.args.get("tag")
-    return jsonify(monitors=list_monitors(status=status, monitor_type=mtype, category=cat, tag=tag))
+    creator = request.args.get("created_by")
+    return jsonify(monitors=list_monitors(status=status, monitor_type=mtype, category=cat, tag=tag, created_by=creator))
 
 
 @app.route("/api/monitors", methods=["POST"])

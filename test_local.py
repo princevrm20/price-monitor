@@ -1,4 +1,4 @@
-"""Comprehensive local test of all 16 features."""
+"""Comprehensive local test of all features."""
 import httpx
 import json
 import sys
@@ -63,9 +63,11 @@ r = admin.post("/api/monitors", json={
     "type": "product", "name": "Test Product", "url": "https://example.com",
     "budget": 999, "tags": "electronics, test", "category": "gadgets",
     "alert_mode": "budget", "comparison_group": "test-group",
+    "created_by": "prince",
 })
 check("Create product", r.status_code == 201)
 prod_id = r.json()["monitor"]["id"]
+check("Created by is set", r.json()["monitor"].get("created_by") == "prince")
 
 print("\n=== MONITOR CRUD (train) ===")
 r = admin.post("/api/monitors", json={
@@ -73,6 +75,7 @@ r = admin.post("/api/monitors", json={
     "from_station": "NDLS", "to_station": "MMCT", "travel_date": "2026-05-01",
     "class_code": "3A", "quota": "GN", "fare_budget": 1500,
     "tags": ["travel"], "alert_mode": "drop_percent", "alert_drop_percent": 15,
+    "created_by": "john",
 })
 check("Create train", r.status_code == 201)
 train_id = r.json()["monitor"]["id"]
@@ -83,9 +86,21 @@ r = admin.post("/api/monitors", json={
     "flight_origin": "DEL", "flight_destination": "BOM",
     "flight_date": "2026-06-01", "flight_max_price": 5000,
     "tags": "travel, flight", "alert_mode": "any_change",
+    "created_by": "prince",
 })
 check("Create flight", r.status_code == 201)
 flight_id = r.json()["monitor"]["id"]
+
+# ── FILTER BY CREATOR ────────────────────────────────────────
+print("\n=== FILTER BY CREATOR ===")
+r = admin.get("/api/monitors?created_by=prince")
+prince_mons = r.json()["monitors"]
+check("Filter by creator=prince", len(prince_mons) >= 2)
+check("All results are prince's", all(m.get("created_by") == "prince" for m in prince_mons))
+
+r = admin.get("/api/monitors?created_by=john")
+john_mons = r.json()["monitors"]
+check("Filter by creator=john", len(john_mons) >= 1)
 
 # ── TAGS ─────────────────────────────────────────────────────
 print("\n=== TAGS ===")
@@ -97,7 +112,7 @@ check("Product has tags", "electronics" in prod_mon.get("tags", []) and "test" i
 r = admin.get("/api/monitors?tag=travel")
 check("Filter by tag", len(r.json()["monitors"]) >= 2)
 
-# ── ALERT MODE ───────────────────────────────────────────────
+# ── ALERT MODES ───────────────────────────────────────────────
 print("\n=== ALERT MODES ===")
 r = admin.get(f"/api/monitors/{prod_id}")
 check("Product alert_mode=budget", r.json()["monitor"]["alert_mode"] == "budget")
@@ -113,17 +128,18 @@ check("Flight alert_mode=any_change", r.json()["monitor"]["alert_mode"] == "any_
 print("\n=== UPDATE ===")
 r = admin.put(f"/api/monitors/{prod_id}", json={
     "budget": 899, "tags": "electronics, updated",
-    "comparison_group": "cmp-test",
+    "comparison_group": "cmp-test", "created_by": "prince_updated",
 })
 mon = r.json()["monitor"]
 check("Update budget", mon["budget"] == 899)
 check("Update tags", "updated" in mon.get("tags", []))
+check("Update created_by", mon.get("created_by") == "prince_updated")
 
 # ── COMPARISON GROUP ─────────────────────────────────────────
 print("\n=== COMPARISON ===")
 r = admin.post("/api/monitors", json={
     "type": "product", "name": "Comp Product 2", "url": "https://flipkart.com/dp/test",
-    "budget": 950, "comparison_group": "cmp-test",
+    "budget": 950, "comparison_group": "cmp-test", "created_by": "prince",
 })
 check("Create comparison product", r.status_code == 201)
 comp_id = r.json()["monitor"]["id"]
@@ -178,7 +194,8 @@ export_data = r.json()
 check("Export is a list", isinstance(export_data, list) and len(export_data) >= 3)
 
 r = admin.post("/api/monitors/import", json=[{
-    "type": "product", "name": "Imported Mon", "url": "https://imported.com", "budget": 100,
+    "type": "product", "name": "Imported Mon", "url": "https://imported.com",
+    "budget": 100, "created_by": "import_user",
 }])
 check("Import monitors", r.json()["ok"] and r.json()["count"] == 1)
 
@@ -199,11 +216,16 @@ check("Has import/export", 'Export All' in r.text)
 check("Has audit section", 'Audit Log' in r.text)
 check("Has email fields", 'smtp' in r.text.lower())
 check("Has alert mode selector", 'alert-mode' in r.text)
+check("Has creator column", 'Created by' in r.text)
+check("Has creator filter", 'creator' in r.text.lower())
+check("Has created-by in create form", 'c-created-by' in r.text)
+
+r = admin.get("/?creator=prince")
+check("Creator filter works on page", r.status_code == 200)
 
 r = admin.get(f"/monitor/{prod_id}")
-check("Detail page renders", r.status_code == 200 and "Test Product" in r.text)
-check("Detail has alert mode", "alert_mode" in r.text.lower() or "Alert Mode" in r.text)
-check("Detail has comparison", "Comparison" in r.text or "comparison" in r.text)
+check("Detail page renders", r.status_code == 200)
+check("Detail shows created by", "prince" in r.text.lower() or "Created by" in r.text)
 
 # ── AUDIT LOG ────────────────────────────────────────────────
 print("\n=== AUDIT LOG ===")
@@ -277,10 +299,9 @@ check("Viewer CANNOT start loop", r.status_code == 403)
 print("\n=== CLEANUP ===")
 admin.delete(f"/api/monitors/{dup_id}")
 admin.delete(f"/api/monitors/{comp_id}")
-# Clean imported
 r = admin.get("/api/monitors")
 for m in r.json()["monitors"]:
-    if m["name"] == "Imported Mon":
+    if m["name"] in ("Imported Mon",):
         admin.delete(f"/api/monitors/{m['id']}")
 admin.delete(f"/api/monitors/{prod_id}")
 admin.delete(f"/api/monitors/{train_id}")

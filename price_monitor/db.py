@@ -114,6 +114,7 @@ def list_monitors(
     category: str | None = None,
     tag: str | None = None,
     comparison_group: str | None = None,
+    created_by: str | None = None,
 ) -> list[dict]:
     sb = _get_supabase()
     if sb:
@@ -128,6 +129,8 @@ def list_monitors(
             q = q.contains("tags", [tag])
         if comparison_group:
             q = q.eq("comparison_group", comparison_group)
+        if created_by:
+            q = q.eq("created_by", created_by)
         return q.execute().data
 
     all_m = _read_json("monitors.json")
@@ -141,6 +144,8 @@ def list_monitors(
         all_m = [m for m in all_m if tag in (m.get("tags") or [])]
     if comparison_group:
         all_m = [m for m in all_m if m.get("comparison_group") == comparison_group]
+    if created_by:
+        all_m = [m for m in all_m if m.get("created_by") == created_by]
     all_m.sort(key=lambda m: m.get("created_at", ""), reverse=True)
     return all_m
 
