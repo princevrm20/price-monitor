@@ -87,6 +87,14 @@ details .inner{margin-top:.85rem;}
     <div class="si"><div class="sl">Created</div><div class="sv" style="font-size:.85rem">{{ mon.created_at[:10] if mon.get('created_at') else '—' }}</div></div>
   </div>
 
+  {% if mon.get('url') %}
+  <div style="margin-bottom:.6rem;font-size:.84rem;word-break:break-all">
+    <a href="{{ mon.url }}" target="_blank" rel="noopener" style="color:var(--primary);text-decoration:none;display:inline-flex;align-items:center;gap:.3rem">
+      <span style="font-size:.9rem">🔗</span> {{ mon.url }}
+    </a>
+  </div>
+  {% endif %}
+
   <div style="margin-bottom:.5rem">
     {% for tag in (mon.get('tags') or []) %}<span class="tag">{{ tag }}</span>{% endfor %}
     {% if mon.get('category') %}<span class="tag" style="background:var(--muted)">{{ mon.category }}</span>{% endif %}

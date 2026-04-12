@@ -1,4 +1,4 @@
-const CACHE = 'pricemon-v14';
+const CACHE = 'pricemon-v15';
 const SHELL = ['/static/manifest.json'];
 
 self.addEventListener('install', e => {
