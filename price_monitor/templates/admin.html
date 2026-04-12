@@ -169,6 +169,7 @@ details .inner{margin-top:.85rem;}
       <td>{% for tag in (m.get('tags') or []) %}<span class="tag">{{ tag }}</span>{% endfor %}{% if not m.get('tags') and m.get('category') %}<span class="tag">{{ m.category }}</span>{% endif %}</td>
       <td>
         <div class="actions">
+          <button class="btn bo" onclick="openEdit('{{ m.id }}')" style="font-size:.7rem">View / Edit</button>
           <button class="btn bp" onclick="checkMon('{{ m.id }}',this)" style="font-size:.7rem">Check Price</button>
           <button class="btn {{ 'bo' if not m.get('notify_enabled', true) else 'bp' }}" id="bell-{{ m.id }}" onclick="toggleNotify('{{ m.id }}',this)" title="{{ 'Notifications ON – click to disable' if m.get('notify_enabled', true) else 'Notifications OFF – click to enable' }}" style="font-size:.85rem;padding:.3rem .5rem">{{ '🔔' if m.get('notify_enabled', true) else '🔕' }}</button>
           {% if m.status == 'active' %}
@@ -376,6 +377,13 @@ details .inner{margin-top:.85rem;}
 <div class="modal-bg" id="modal-create">
 <div class="modal">
   <h2 id="modal-title">New Monitor</h2>
+
+  <!-- Read-only info (shown only when editing) -->
+  <div id="edit-info" style="display:none;margin-bottom:1rem">
+    <div id="edit-info-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:.5rem;margin-bottom:.6rem"></div>
+    <div id="edit-info-extra"></div>
+  </div>
+
   <div class="fg"><label>Type</label><select id="c-type" onchange="toggleFields()"><option value="product">Product</option><option value="flight">Flight</option></select></div>
   <div class="fg"><label>Name <span class="req">*</span></label><input type="text" id="c-name"></div>
   <div class="fg"><label>Created by</label><input type="text" id="c-created-by" value="{{ username }}" readonly style="background:var(--bg);cursor:default;"></div>
@@ -392,8 +400,9 @@ details .inner{margin-top:.85rem;}
 
   <div id="fields-product">
     <div class="fg"><label>URL <span class="req">*</span></label><input type="url" id="c-url"></div>
-    <div class="hint" style="margin-top:-.4rem;margin-bottom:.7rem">Supports Amazon, Flipkart, and most e-commerce sites. Just paste the product link.</div>
+    <div class="hint" style="margin-top:-.4rem;margin-bottom:.7rem">Supports Amazon, Flipkart, Myntra and most e-commerce sites. Just paste the product link.</div>
     <div class="fg"><label>Budget <span class="req">*</span></label><input type="text" id="c-budget"></div>
+    <div class="fg"><label>Price selector <span style="color:var(--muted)">(optional CSS selector)</span></label><input type="text" id="c-selector" placeholder="Leave blank for auto-detect"></div>
     <div class="fg"><label>Monitor until <span style="color:var(--muted)">(optional)</span></label><input type="text" id="c-until" placeholder="YYYY-MM-DD"></div>
   </div>
 
@@ -412,8 +421,8 @@ details .inner{margin-top:.85rem;}
     </div>
   </div>
 
-  <div class="br">
-    <button class="btn bp" onclick="submitCreate()">Create</button>
+  <div class="br" id="modal-buttons">
+    <button class="btn bp" id="btn-modal-submit" onclick="submitCreate()">Create</button>
     <button class="btn bo" onclick="closeModal()">Cancel</button>
   </div>
 </div>
@@ -468,8 +477,102 @@ function toggleAlertFields(){
 }
 
 /* Modal */
-function openCreate(type){$('c-type').value=type;toggleFields();$('c-name').value='';$('c-created-by').value=_username;$('c-tags').value='';$('c-category').value='';$('c-interval').value='60';$('c-alert-mode').value='budget';$('c-drop-pct').value='10';$('c-comp-group').value='';toggleAlertFields();$('c-notify').checked=true;$('c-url').value='';$('c-budget').value='';$('c-until').value='';$('c-forigin').value='';$('c-fdest').value='';$('c-fdate').value='';$('c-frdate').value='';$('c-fmaxprice').value='';$('c-fairline').value='';$('modal-title').textContent='New '+type.charAt(0).toUpperCase()+type.slice(1)+' Monitor';$('modal-create').classList.add('show');}
-function closeModal(){$('modal-create').classList.remove('show');}
+let _editMonId=null;
+
+function _resetForm(){
+  $('c-name').value='';$('c-created-by').value=_username;$('c-tags').value='';$('c-category').value='';
+  $('c-interval').value='60';$('c-alert-mode').value='budget';$('c-drop-pct').value='10';$('c-comp-group').value='';
+  $('c-notify').checked=true;$('c-url').value='';$('c-budget').value='';$('c-selector').value='';$('c-until').value='';
+  $('c-forigin').value='';$('c-fdest').value='';$('c-fdate').value='';$('c-frdate').value='';$('c-fmaxprice').value='';$('c-fairline').value='';
+}
+
+function openCreate(type){
+  _editMonId=null;
+  $('c-type').value=type;$('c-type').disabled=false;
+  toggleFields();_resetForm();toggleAlertFields();
+  $('edit-info').style.display='none';
+  $('modal-title').textContent='New '+type.charAt(0).toUpperCase()+type.slice(1)+' Monitor';
+  $('btn-modal-submit').textContent='Create';$('btn-modal-submit').onclick=submitCreate;
+  $('modal-create').classList.add('show');
+}
+
+async function openEdit(monId){
+  _editMonId=monId;
+  try{
+    const r=await(await fetch('/api/monitors/'+monId)).json();
+    const m=r.monitor;
+    if(!m){toast('Could not load monitor',false);return;}
+
+    $('c-type').value=m.type||'product';$('c-type').disabled=true;
+    toggleFields();
+    $('c-name').value=m.name||'';
+    $('c-created-by').value=m.created_by||_username;
+    $('c-tags').value=(m.tags||[]).join(', ');
+    $('c-category').value=m.category||'';
+    $('c-interval').value=m.check_interval_min||60;
+    $('c-alert-mode').value=m.alert_mode||'budget';
+    $('c-drop-pct').value=m.alert_drop_percent||10;
+    toggleAlertFields();
+    $('c-comp-group').value=m.comparison_group||'';
+    $('c-notify').checked=m.notify_enabled!==false;
+
+    if(m.type==='product'){
+      $('c-url').value=m.url||'';
+      $('c-budget').value=m.budget!=null?m.budget:'';
+      $('c-selector').value=m.price_selector||'';
+      $('c-until').value=m.monitor_until||'';
+    }else if(m.type==='flight'){
+      $('c-forigin').value=m.flight_origin||'';
+      $('c-fdest').value=m.flight_destination||'';
+      $('c-fdate').value=m.flight_date||'';
+      $('c-frdate').value=m.flight_return_date||'';
+      $('c-fmaxprice').value=m.flight_max_price!=null?m.flight_max_price:'';
+      $('c-fairline').value=m.flight_airline_pref||'';
+    }
+
+    /* Build read-only info grid */
+    let grid='';
+    const si=(label,val,color)=>'<div style="background:var(--bg);border-radius:6px;padding:.5rem .6rem"><div style="font-size:.65rem;text-transform:uppercase;color:var(--muted)">'+label+'</div><div style="font-size:.95rem;font-weight:600;'+(color?'color:'+color:'')+'">'+val+'</div></div>';
+    grid+=si('Status','<span class=\'badge b-'+m.status+'\'>'+m.status+'</span>'+(m.sold_out?' <span class=\'badge\' style=\'background:#fee2e2;color:#991b1b;font-size:.6rem\'>Sold Out</span>':''));
+    if(m.type==='product'){
+      const p=m.last_price;
+      const pStr=p!=null?'₹'+Number(p).toLocaleString():'—';
+      const pColor=p!=null&&m.budget!=null?(p<=m.budget?'var(--success)':'var(--danger)'):'';
+      grid+=si('Current Price',pStr,pColor);
+      const peak=m.highest_price;
+      grid+=si('Highest Seen',peak!=null?'₹'+Number(peak).toLocaleString():'—');
+    }else{
+      const fp=m.last_flight_price;
+      grid+=si('Current Price',fp!=null?'₹'+Number(fp).toLocaleString():'—');
+    }
+    const lc=m.last_checked_at;
+    grid+=si('Last Checked',lc?new Date(lc).toLocaleString():'Never');
+    grid+=si('Created',m.created_at?m.created_at.slice(0,10):'—');
+    const errs=m.consecutive_errors||0;
+    grid+=si('Health',errs===0?'OK':'<span style=\'color:var(--danger)\'>'+errs+' error(s)</span>');
+    $('edit-info-grid').innerHTML=grid;
+
+    let extra='';
+    if(m.detected_name){
+      extra+='<div style="font-size:.78rem;color:var(--muted);background:var(--bg);padding:.4rem .6rem;border-radius:6px;margin-bottom:.4rem"><strong>Detected product:</strong> '+esc(m.detected_name)+'</div>';
+    }
+    if(m.sold_out){
+      const reason=m.sold_out_reason==='product_replaced'?'replaced by a different product':'sold out';
+      extra+='<div style="font-size:.78rem;color:var(--danger);background:#fef2f2;padding:.4rem .6rem;border-radius:6px;margin-bottom:.4rem">⚠️ This product appears to be '+reason+'. Monitoring paused.</div>';
+    }
+    if(m.last_error_msg){
+      extra+='<div style="font-size:.75rem;color:var(--danger);background:#fef2f2;padding:.4rem .6rem;border-radius:6px;margin-bottom:.4rem"><strong>Last error:</strong> '+esc(m.last_error_msg).slice(0,200)+'</div>';
+    }
+    $('edit-info-extra').innerHTML=extra;
+    $('edit-info').style.display='';
+
+    $('modal-title').textContent='View / Edit: '+esc(m.name||monId.slice(0,8));
+    $('btn-modal-submit').textContent='Save Changes';$('btn-modal-submit').onclick=submitEdit;
+    $('modal-create').classList.add('show');
+  }catch(e){toast('Failed to load monitor: '+e.message,false);}
+}
+
+function closeModal(){$('modal-create').classList.remove('show');_editMonId=null;}
 function toggleFields(){const t=$('c-type').value;$('fields-product').style.display=t==='product'?'':'none';$('fields-flight').style.display=t==='flight'?'':'none';}
 
 async function submitCreate(){
@@ -477,10 +580,27 @@ async function submitCreate(){
   const createdBy=$('c-created-by').value.trim()||_username;
   const base={type:t,name:$('c-name').value,created_by:createdBy,tags:$('c-tags').value,category:$('c-category').value,check_interval_min:parseInt($('c-interval').value)||60,alert_mode:$('c-alert-mode').value,alert_drop_percent:$('c-drop-pct').value||null,comparison_group:$('c-comp-group').value,notify_enabled:$('c-notify').checked};
   let d;
-  if(t==='product') d={...base,url:$('c-url').value,budget:$('c-budget').value,monitor_until:$('c-until').value};
+  if(t==='product') d={...base,url:$('c-url').value,budget:$('c-budget').value,price_selector:$('c-selector').value||null,monitor_until:$('c-until').value};
   else d={...base,flight_origin:$('c-forigin').value,flight_destination:$('c-fdest').value,flight_date:$('c-fdate').value,flight_return_date:$('c-frdate').value,flight_max_price:$('c-fmaxprice').value,flight_airline_pref:$('c-fairline').value};
   const r=await api('/api/monitors',d);
   if(r.ok){toast('Monitor created');closeModal();location.reload();}else toast(r.error||'Failed',false);
+}
+
+async function submitEdit(){
+  if(!_editMonId)return;
+  const t=$('c-type').value;
+  const d={name:$('c-name').value,created_by:$('c-created-by').value.trim(),tags:$('c-tags').value,category:$('c-category').value,check_interval_min:parseInt($('c-interval').value)||60,alert_mode:$('c-alert-mode').value,alert_drop_percent:parseFloat($('c-drop-pct').value)||null,comparison_group:$('c-comp-group').value,notify_enabled:$('c-notify').checked};
+  if(t==='product'){
+    d.url=$('c-url').value;d.budget=parseFloat($('c-budget').value)||null;
+    d.price_selector=$('c-selector').value||null;d.monitor_until=$('c-until').value||null;
+  }else if(t==='flight'){
+    d.flight_origin=$('c-forigin').value;d.flight_destination=$('c-fdest').value;
+    d.flight_date=$('c-fdate').value;d.flight_return_date=$('c-frdate').value||null;
+    d.flight_max_price=parseFloat($('c-fmaxprice').value)||null;d.flight_airline_pref=$('c-fairline').value||null;
+  }
+  const r=await fetch('/api/monitors/'+_editMonId,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)});
+  const j=await r.json();
+  if(j.ok){toast('Monitor updated');closeModal();location.reload();}else toast(j.error||'Update failed',false);
 }
 
 /* Actions */
