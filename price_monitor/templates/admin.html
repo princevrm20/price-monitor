@@ -539,6 +539,9 @@ function showCheckResult(m){
   html+='Status: <span class="badge b-'+m.status+'">'+m.status+'</span>';
   if(m.alert_mode)html+=' &nbsp;·&nbsp; Alert mode: '+m.alert_mode;
   html+='</div>';
+  if(m.notified_budget){
+    html+='<div style="font-size:.78rem;color:var(--warn);margin-top:.4rem">⚠ Alert already sent for this price drop. A new alert will be sent if the price rises above your budget and drops below it again.</div>';
+  }
   html+='</div>';
   $('cr-body').innerHTML=html;
   $('modal-check-result').classList.add('show');

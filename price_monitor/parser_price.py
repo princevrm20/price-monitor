@@ -22,7 +22,6 @@ def _first_float(text: str) -> float | None:
     if not text:
         return None
     normalized = text.replace("\xa0", " ").strip()
-    # Prefer patterns like 1,234.56 or 1234.56 or 1.234,56
     candidates: list[float] = []
     for m in re.finditer(r"[\d.,]+", normalized):
         chunk = m.group(0)
@@ -31,8 +30,24 @@ def _first_float(text: str) -> float | None:
             candidates.append(parsed)
     if not candidates:
         return None
-    # Heuristic: product pages often show the main price as a "medium-large" number.
-    return min(c for c in candidates if c >= 0.01)
+    return candidates[0]
+
+
+def _extract_currency_price(text: str) -> float | None:
+    """Extract price preceded by a currency symbol/word (₹, Rs., $, etc.)."""
+    if not text:
+        return None
+    normalized = text.replace("\xa0", " ").strip()
+    patterns = [
+        r"(?:₹|Rs\.?|INR|USD|\$|€|£)\s*([\d,]+(?:\.\d{1,2})?)",
+        r"([\d,]+(?:\.\d{1,2})?)\s*(?:₹|Rs\.?|INR|USD|\$|€|£)",
+    ]
+    for pat in patterns:
+        for m in re.finditer(pat, normalized, re.IGNORECASE):
+            parsed = _parse_number_token(m.group(1))
+            if parsed is not None and parsed >= 1:
+                return parsed
+    return None
 
 
 def _parse_number_token(s: str) -> float | None:
@@ -103,10 +118,9 @@ def _price_from_offers(offers: Any) -> float | None:
         return None
     if isinstance(offers, dict):
         if "price" in offers:
-            try:
-                return float(str(offers["price"]).replace(",", "."))
-            except (TypeError, ValueError):
-                return None
+            return _parse_number_token(str(offers["price"]))
+        if "lowPrice" in offers:
+            return _parse_number_token(str(offers["lowPrice"]))
         if "@graph" in offers:
             return _price_from_offers(offers["@graph"])
     return None
@@ -297,20 +311,48 @@ def _flipkart_selector_fallbacks() -> list[str]:
     ]
 
 
+def _generic_price_selectors() -> list[str]:
+    """Common selectors across Shopify, WooCommerce, and other e-commerce platforms."""
+    return [
+        # Shopify
+        "[data-product-price]",
+        ".product__price.on-sale",
+        ".product__price:not(.product__price--compare)",
+        ".price-item--sale",
+        ".price-item--regular",
+        ".product-price__price",
+        ".product-single__price",
+        ".ProductMeta__Price",
+        # WooCommerce
+        ".woocommerce-Price-amount.amount",
+        "ins .woocommerce-Price-amount",
+        "p.price ins .amount",
+        "p.price .amount",
+        # Generic e-commerce patterns
+        "[data-price]",
+        ".current-price",
+        ".sale-price",
+        ".offer-price",
+        ".special-price .price",
+        ".product-price-current",
+        "#product-price",
+        ".pdp-price",
+    ]
+
+
 def extract_price(html: str, price_selector: str | None, product_url: str | None = None) -> float | None:
     soup = _make_soup(html)
 
+    # 1. User-supplied selector first
     selectors: list[str] = []
     if price_selector and price_selector.strip():
         selectors.append(price_selector.strip())
+
+    # 2. Site-specific selectors
     if _is_amazon_url(product_url):
-        for s in _amazon_selector_fallbacks():
-            if s not in selectors:
-                selectors.append(s)
+        selectors.extend(s for s in _amazon_selector_fallbacks() if s not in selectors)
     if _is_flipkart_url(product_url):
-        for s in _flipkart_selector_fallbacks():
-            if s not in selectors:
-                selectors.append(s)
+        selectors.extend(s for s in _flipkart_selector_fallbacks() if s not in selectors)
 
     for sel in selectors:
         node = soup.select_one(sel)
@@ -320,28 +362,49 @@ def extract_price(html: str, price_selector: str | None, product_url: str | None
         if p is not None:
             return p
 
+    # 3. Flight listing check (ixigo)
     if _ixigo_flight_listing_url(product_url):
         fp = _extract_json_ld_ixigo_flight_min(soup)
         if fp is not None:
             return fp
 
+    # 4. Amazon regex fallback
     if _is_amazon_url(product_url):
         rx = _amazon_regex_price_from_html(html)
         if rx is not None:
             return rx
 
+    # 5. Open Graph / meta price tags
     og = _meta_content(soup, "product:price:amount") or _meta_content(soup, "og:price:amount")
     if og:
-        try:
-            return float(str(og).replace(",", "."))
-        except ValueError:
-            pass
+        p = _parse_number_token(str(og))
+        if p is not None:
+            return p
 
+    # 6. JSON-LD structured data
     ld = _extract_from_json_ld(soup)
     if ld is not None:
         return ld
 
+    # 7. Generic e-commerce selectors (Shopify, WooCommerce, etc.)
+    for sel in _generic_price_selectors():
+        node = soup.select_one(sel)
+        if not node:
+            continue
+        text = node.get_text(" ", strip=True)
+        p = _extract_currency_price(text)
+        if p is not None:
+            return p
+        p = _first_float(text)
+        if p is not None and p >= 1:
+            return p
+
+    # 8. Look for prices near currency symbols in the page body
     body = soup.body
     if body:
-        return _first_float(body.get_text(" ", strip=True))
+        body_text = body.get_text(" ", strip=True)
+        cp = _extract_currency_price(body_text)
+        if cp is not None:
+            return cp
+
     return None
