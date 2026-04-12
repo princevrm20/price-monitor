@@ -311,6 +311,41 @@ def _flipkart_selector_fallbacks() -> list[str]:
     ]
 
 
+def _is_myntra_url(url: str | None) -> bool:
+    if not url:
+        return False
+    return "myntra.com" in url.lower()
+
+
+def _myntra_selector_fallbacks() -> list[str]:
+    return [
+        ".pdp-price strong",
+        ".pdp-discountedPrice",
+        ".pdp-discount-container .pdp-price strong",
+        ".pdp-mrpPrice",
+        "span.pdp-price",
+    ]
+
+
+def _extract_price_from_scripts(soup: BeautifulSoup) -> float | None:
+    """Extract price from inline JS data objects (e.g. Myntra pdpData)."""
+    for script in soup.find_all("script"):
+        text = script.string or ""
+        if not text or len(text) < 50:
+            continue
+        for pat in [
+            r'"discountedPrice"\s*:\s*(\d+(?:\.\d+)?)',
+            r'"price"\s*:\s*\{\s*"mrp"\s*:\s*\d+\s*,\s*"discounted"\s*:\s*(\d+(?:\.\d+)?)',
+            r'"price"\s*:\s*"?(\d+(?:\.\d+)?)"?\s*,\s*"priceCurrency"',
+        ]:
+            m = re.search(pat, text)
+            if m:
+                val = _parse_number_token(m.group(1))
+                if val is not None and val >= 1:
+                    return val
+    return None
+
+
 def _generic_price_selectors() -> list[str]:
     """Common selectors across Shopify, WooCommerce, and other e-commerce platforms."""
     return [
@@ -353,6 +388,8 @@ def extract_price(html: str, price_selector: str | None, product_url: str | None
         selectors.extend(s for s in _amazon_selector_fallbacks() if s not in selectors)
     if _is_flipkart_url(product_url):
         selectors.extend(s for s in _flipkart_selector_fallbacks() if s not in selectors)
+    if _is_myntra_url(product_url):
+        selectors.extend(s for s in _myntra_selector_fallbacks() if s not in selectors)
 
     for sel in selectors:
         node = soup.select_one(sel)
@@ -399,7 +436,12 @@ def extract_price(html: str, price_selector: str | None, product_url: str | None
         if p is not None and p >= 1:
             return p
 
-    # 8. Look for prices near currency symbols in the page body
+    # 8. Price from inline JS data objects (Myntra, etc.)
+    sp = _extract_price_from_scripts(soup)
+    if sp is not None:
+        return sp
+
+    # 9. Look for prices near currency symbols in the page body
     body = soup.body
     if body:
         body_text = body.get_text(" ", strip=True)

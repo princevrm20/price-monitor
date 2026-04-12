@@ -380,8 +380,9 @@ details .inner{margin-top:.85rem;}
   <div class="fg"><label>Category</label><input type="text" id="c-category" placeholder="e.g. Electronics, Travel"></div>
   <div class="fg"><label>Check interval (min)</label><input type="number" id="c-interval" value="60" min="1" max="1440"></div>
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem">
-    <div class="fg"><label>Alert Mode</label><select id="c-alert-mode" onchange="toggleAlertFields()"><option value="budget">Budget threshold</option><option value="drop_percent">Price drop %</option><option value="any_change">Any change</option></select></div>
+    <div class="fg"><label>Alert Mode</label><select id="c-alert-mode" onchange="toggleAlertFields()"><option value="budget">Budget only</option><option value="drop_percent">Budget + Drop %</option><option value="any_change">Any price change</option></select></div>
     <div class="fg" id="fg-drop-pct" style="display:none"><label>Drop % threshold</label><input type="number" id="c-drop-pct" value="10" min="1" max="99"></div>
+    <div class="hint" id="hint-alert-mode" style="margin-top:-.4rem;margin-bottom:.7rem;font-size:.72rem;color:var(--muted)"></div>
   </div>
   <div class="fg"><label>Comparison Group <span style="color:var(--muted)">(optional)</span></label><input type="text" id="c-comp-group" placeholder="e.g. iphone-15"></div>
   <div class="fg"><label style="display:flex;align-items:center;gap:.5rem;cursor:pointer"><input type="checkbox" id="c-notify" checked style="width:auto;accent-color:var(--primary)"> Send notifications when price drops</label></div>
@@ -456,7 +457,12 @@ function toggleTheme(){const h=document.documentElement;const d=h.getAttribute('
 (function(){const t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t);})();
 
 /* Alert mode toggle */
-function toggleAlertFields(){$('fg-drop-pct').style.display=$('c-alert-mode').value==='drop_percent'?'':'none';}
+function toggleAlertFields(){
+  const mode=$('c-alert-mode').value;
+  $('fg-drop-pct').style.display=mode==='drop_percent'?'':'none';
+  const hints={budget:'Notifies when price drops to or below your budget.',drop_percent:'Notifies when price drops to/below budget OR drops by the specified % from peak — whichever happens first.',any_change:'Notifies on every price change, regardless of budget.'};
+  $('hint-alert-mode').textContent=hints[mode]||'';
+}
 
 /* Modal */
 function openCreate(type){$('c-type').value=type;toggleFields();$('c-name').value='';$('c-created-by').value=_username;$('c-tags').value='';$('c-category').value='';$('c-interval').value='60';$('c-alert-mode').value='budget';$('c-drop-pct').value='10';$('c-comp-group').value='';toggleAlertFields();$('c-notify').checked=true;$('c-url').value='';$('c-budget').value='';$('c-until').value='';$('c-forigin').value='';$('c-fdest').value='';$('c-fdate').value='';$('c-frdate').value='';$('c-fmaxprice').value='';$('c-fairline').value='';$('modal-title').textContent='New '+type.charAt(0).toUpperCase()+type.slice(1)+' Monitor';$('modal-create').classList.add('show');}
@@ -544,7 +550,14 @@ function showCheckResult(m){
   if(m.notify_enabled===false){
     html+='<div style="font-size:.78rem;color:var(--warn);margin-top:.4rem">🔕 Notifications are turned off for this monitor. Enable them from the dashboard to receive price alerts.</div>';
   }else{
-    html+='<div style="font-size:.78rem;color:var(--muted);margin-top:.4rem">🔔 Notifications are on. You will be alerted each time the price changes while below your budget.</div>';
+    let info='🔔 Notifications are on. You will be alerted when:';
+    let conds=[];
+    if(m.budget!=null)conds.push('price drops to or below your budget (₹'+Number(m.budget).toLocaleString()+')');
+    if(m.alert_drop_percent)conds.push('price drops by '+m.alert_drop_percent+'% or more from peak');
+    if(m.alert_mode==='any_change')conds.push('price changes at all');
+    if(conds.length)info+=' '+conds.join(', or ');
+    else info+=' price drops below your budget';
+    html+='<div style="font-size:.78rem;color:var(--muted);margin-top:.4rem">'+info+'.</div>';
   }
   html+='</div>';
   $('cr-body').innerHTML=html;

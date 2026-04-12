@@ -660,37 +660,43 @@ def api_import_monitors():
 # CHECK (per-monitor) with alert modes, health tracking
 # ═══════════════════════════════════════════════════════════════════════
 
-def _should_alert(mon: dict, current_value: float | None, value_key: str, budget_key: str) -> bool:
-    """Determine if an alert should fire based on alert_mode and notify_enabled."""
+def _should_alert(mon: dict, current_value: float | None, value_key: str, budget_key: str) -> dict:
+    """Return dict of triggered alert reasons. Empty dict = no alert.
+
+    Both budget and drop_percent are checked independently.
+    Keys in result: 'budget' (bool), 'drop_percent' (float actual %), 'any_change' (bool).
+    """
     if current_value is None:
-        return False
+        return {}
     if mon.get("notify_enabled") is False:
-        return False
+        return {}
 
     mode = mon.get("alert_mode", "budget")
     last_key = f"last_{value_key}"
     last_val = mon.get(last_key)
     price_changed = last_val is None or current_value != last_val
+    if not price_changed:
+        return {}
 
-    if mode == "budget":
-        budget = mon.get(budget_key)
-        if budget is not None and current_value <= budget and price_changed:
-            return True
+    reasons: dict = {}
 
-    elif mode == "drop_percent":
+    budget = mon.get(budget_key)
+    if budget is not None and current_value <= budget:
+        reasons["budget"] = True
+
+    drop_pct = mon.get("alert_drop_percent")
+    if drop_pct:
         peak_key = "highest_price" if value_key == "price" else ("highest_fare" if value_key == "fare" else "highest_price")
         peak = mon.get(peak_key)
-        drop_pct = mon.get("alert_drop_percent") or 10
         if peak and peak > 0:
             actual_drop = ((peak - current_value) / peak) * 100
-            if actual_drop >= drop_pct and price_changed:
-                return True
+            if actual_drop >= drop_pct:
+                reasons["drop_percent"] = actual_drop
 
-    elif mode == "any_change":
-        if price_changed:
-            return True
+    if mode == "any_change" and not reasons:
+        reasons["any_change"] = True
 
-    return False
+    return reasons
 
 
 def _update_peak(mon: dict, current_value: float | None, peak_key: str) -> dict:
@@ -718,18 +724,21 @@ def _do_check_product(mon: dict) -> tuple[dict, dict]:
 
     updates.update(_update_peak(mon, price, "highest_price"))
 
-    if _should_alert(mon, price, "price", "budget"):
-        mode = mon.get("alert_mode", "budget")
-        if mode == "budget":
-            _send_alert(mon, f"Price alert: {mon['name']}", f"Now {price:g} (budget {mon['budget']:g}).\n{mon['url']}")
-        elif mode == "drop_percent":
+    reasons = _should_alert(mon, price, "price", "budget")
+    if reasons:
+        parts = []
+        if "budget" in reasons:
+            parts.append(f"Below budget! Now {price:g} (budget {mon['budget']:g})")
+        if "drop_percent" in reasons:
             peak = mon.get("highest_price") or price
-            drop = ((peak - price) / peak) * 100 if peak else 0
-            _send_alert(mon, f"Price drop: {mon['name']}", f"Dropped {drop:.1f}% to {price:g} (peak was {peak:g}).\n{mon['url']}")
-        elif mode == "any_change":
+            parts.append(f"Dropped {reasons['drop_percent']:.1f}% from peak {peak:g}")
+        if "any_change" in reasons:
             old = mon.get("last_price")
             direction = "dropped" if old and price < old else "changed"
-            _send_alert(mon, f"Price {direction}: {mon['name']}", f"Now {price:g} (was {old:g if old else '?'}).\n{mon['url']}")
+            parts.append(f"Price {direction} to {price:g} (was {old:g if old else '?'})")
+        title = f"Price alert: {mon['name']}"
+        body = " | ".join(parts) + f"\nNow: {price:g}\n{mon['url']}"
+        _send_alert(mon, title, body)
         details["alerted"] = True
 
     return updates, details
@@ -762,19 +771,21 @@ def _do_check_flight(mon: dict) -> tuple[dict, dict]:
 
     updates.update(_update_peak(mon, price, "highest_price"))
 
-    max_p = mon.get("flight_max_price")
-    if _should_alert(mon, price, "flight_price", "flight_max_price"):
-        mode = mon.get("alert_mode", "budget")
-        if mode == "budget" and max_p:
-            _send_alert(mon, f"Flight price alert: {mon['name']}",
-                        f"Lowest fare {price:g} (max {max_p:g}).\n"
-                        f"{mon['flight_origin']} -> {mon['flight_destination']} on {mon['flight_date']}")
-        elif mode == "drop_percent":
+    reasons = _should_alert(mon, price, "flight_price", "flight_max_price")
+    if reasons:
+        route = f"{mon['flight_origin']} -> {mon['flight_destination']} on {mon['flight_date']}"
+        parts = []
+        max_p = mon.get("flight_max_price")
+        if "budget" in reasons and max_p:
+            parts.append(f"Below max price! Fare {price:g} (max {max_p:g})")
+        if "drop_percent" in reasons:
             peak = mon.get("highest_price") or price
-            drop = ((peak - price) / peak) * 100 if peak else 0
-            _send_alert(mon, f"Flight price drop: {mon['name']}", f"Dropped {drop:.1f}% to {price:g}.")
-        elif mode == "any_change":
-            _send_alert(mon, f"Flight price changed: {mon['name']}", f"Now {price:g}.")
+            parts.append(f"Dropped {reasons['drop_percent']:.1f}% from peak {peak:g}")
+        if "any_change" in reasons:
+            parts.append(f"Fare changed to {price:g}")
+        title = f"Flight alert: {mon['name']}"
+        body = " | ".join(parts) + f"\n{route}"
+        _send_alert(mon, title, body)
         details["alerted"] = True
 
     return updates, details
