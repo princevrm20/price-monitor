@@ -486,17 +486,20 @@ def _ld_has_out_of_stock(obj: Any) -> bool:
     return False
 
 
-def names_match(user_name: str, detected_name: str, threshold: float = 0.3) -> bool:
+def names_match(user_name: str, detected_name: str, threshold: float = 0.4) -> bool:
     """Check if two product names are similar enough (word overlap ratio).
 
-    Returns True if the overlap is above the threshold, meaning the names match.
-    A threshold of 0.3 means at least 30% of words must overlap.
+    Compares overlap against the shorter name (usually the user's),
+    since users type short names while product pages have long titles.
     """
     if not user_name or not detected_name:
         return True
 
+    noise = {"buy", "online", "at", "best", "price", "in", "india", "for", "the", "a", "an", "and", "of", "from", "with"}
+
     def normalize(s: str) -> set[str]:
-        return set(re.sub(r"[^a-z0-9\s]", "", s.lower()).split())
+        words = set(re.sub(r"[^a-z0-9\s]", "", s.lower()).split())
+        return words - noise
 
     words_user = normalize(user_name)
     words_detected = normalize(detected_name)
@@ -505,8 +508,8 @@ def names_match(user_name: str, detected_name: str, threshold: float = 0.3) -> b
         return True
 
     overlap = words_user & words_detected
-    max_words = max(len(words_user), len(words_detected))
-    return len(overlap) / max_words >= threshold
+    min_words = min(len(words_user), len(words_detected))
+    return len(overlap) / min_words >= threshold
 
 
 def extract_price(html: str, price_selector: str | None, product_url: str | None = None) -> float | None:
