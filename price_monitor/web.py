@@ -735,12 +735,23 @@ def _do_check_product(mon: dict) -> tuple[dict, dict]:
         updates["detected_name"] = detected_name
         details["detected_name"] = detected_name
 
-    name_ok = names_match(mon.get("name", ""), detected_name or "")
+    # On first check, store the detected name as baseline for future comparisons
+    baseline = mon.get("baseline_name")
+    if not baseline and detected_name:
+        updates["baseline_name"] = detected_name
+        baseline = detected_name
+
+    # Compare against baseline (what the page showed before), not the user's label
+    name_changed = False
+    if baseline and detected_name:
+        name_changed = not names_match(baseline, detected_name)
+
     was_sold_out = mon.get("sold_out", False)
 
-    if is_sold_out or (detected_name and not name_ok):
+    if is_sold_out or name_changed:
         reason = "sold_out" if is_sold_out else "product_replaced"
-        _logger.info("SOLD OUT    | %s | reason=%s detected_name=%s", mon.get("name", "?"), reason, detected_name or "?")
+        _logger.info("SOLD OUT    | %s | reason=%s detected_name=%s baseline=%s",
+                      mon.get("name", "?"), reason, detected_name or "?", baseline or "?")
 
         if not was_sold_out:
             updates["sold_out"] = True
@@ -756,12 +767,12 @@ def _do_check_product(mon: dict) -> tuple[dict, dict]:
                             f"We'll keep checking periodically and notify you when it's back in stock.\n{mon['url']}")
                 else:
                     body = (f"The page for \"{mon['name']}\" now shows a different product: \"{detected_name}\".\n"
-                            f"The original product may have been discontinued.\n"
+                            f"Previously it was: \"{baseline}\".\n"
                             f"Monitoring has been paused automatically.\n{mon['url']}")
                 _send_alert(mon, f"Product unavailable: {mon['name']}", body)
                 details["alerted"] = True
 
-            add_event(mon["id"], "sold_out", {"reason": reason, "detected_name": detected_name})
+            add_event(mon["id"], "sold_out", {"reason": reason, "detected_name": detected_name, "baseline_name": baseline})
         else:
             updates["sold_out"] = True
 
@@ -772,6 +783,9 @@ def _do_check_product(mon: dict) -> tuple[dict, dict]:
         updates["sold_out"] = False
         updates["sold_out_reason"] = None
         updates["status"] = "active"
+        # Reset baseline since product came back
+        if detected_name:
+            updates["baseline_name"] = detected_name
         details["back_in_stock"] = True
 
         if mon.get("notify_enabled") is not False and price is not None:
