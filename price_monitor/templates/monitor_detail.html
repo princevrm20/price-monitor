@@ -133,7 +133,7 @@ details .inner{margin-top:.85rem;}
   </div>
   {% endif %}
 
-  {% if role == 'admin' %}
+  {% if is_admin %}
   <div class="br">
     <button class="btn bp" onclick="manualCheck()">Check Now</button>
     {% if mon.status == 'active' %}
@@ -156,7 +156,7 @@ details .inner{margin-top:.85rem;}
 {% endif %}
 
 <!-- Edit Form -->
-{% if role == 'admin' %}
+{% if is_admin %}
 <div class="card">
   <details>
     <summary>Edit Monitor</summary>
@@ -188,7 +188,7 @@ details .inner{margin-top:.85rem;}
 {% endif %}
 
 <!-- Event Log (admin only) -->
-{% if role == 'admin' %}
+{% if is_admin %}
 <div class="card">
   <h2>Event Log</h2>
   <div class="log">{% for e in events %}[{{ e.created_at[:19] }}] {{ e.event_type }}: {{ e.details|tojson }}

@@ -19,6 +19,8 @@ from flask import (
     Flask, Response, jsonify, redirect, render_template, request, session, url_for,
 )
 
+ROLE_ADMIN = "admin"
+
 from price_monitor.db import (
     add_audit, add_event, count_users, create_monitor, create_user,
     create_delete_request, delete_monitor, delete_user, get_audit_log,
@@ -108,7 +110,7 @@ def _ensure_admin_exists() -> None:
     create_user({
         "username": _ADMIN_USERNAME,
         "password": _ADMIN_PASSWORD,
-        "role": "admin",
+        "role": ROLE_ADMIN,
     })
     _logger.info("STARTUP     | Admin account '%s' created", _ADMIN_USERNAME)
 
@@ -150,7 +152,7 @@ def require_admin(f):
             if request.is_json or request.path.startswith("/api/"):
                 return jsonify(ok=False, error="Not authenticated"), 401
             return redirect(url_for("login_page"))
-        if session.get("role") != "admin":
+        if session.get("role") != ROLE_ADMIN:
             if request.is_json or request.path.startswith("/api/"):
                 return jsonify(ok=False, error="Admin access required"), 403
             return "Forbidden", 403
@@ -160,7 +162,7 @@ def require_admin(f):
 
 def _can_access_monitor(mon: dict) -> bool:
     """Check if current user owns the monitor or is admin."""
-    if session.get("role") == "admin":
+    if session.get("role") == ROLE_ADMIN:
         return True
     return mon.get("created_by", "") == session.get("username", "")
 
@@ -242,7 +244,7 @@ def logout():
 def admin_dashboard():
     role = session.get("role", "viewer")
     username = session.get("username", "")
-    is_admin = role == "admin"
+    is_admin = role == ROLE_ADMIN
 
     filt_type = request.args.get("type", "")
     filt_status = request.args.get("status", "")
@@ -291,6 +293,8 @@ def admin_dashboard():
         filt_creator=filt_creator,
         logs=list(_global_log) if is_admin else [],
         role=role,
+        role_admin=ROLE_ADMIN,
+        is_admin=is_admin,
         username=username,
         primary_admin=_ADMIN_USERNAME,
         audit_entries=recent_audit,
@@ -303,7 +307,7 @@ def monitor_detail_page(monitor_id):
     mon = get_monitor(monitor_id)
     if not mon:
         return "Not found", 404
-    if session.get("role") != "admin" and mon.get("created_by", "") != session.get("username", ""):
+    if session.get("role") != ROLE_ADMIN and mon.get("created_by", "") != session.get("username", ""):
         return "Access denied", 403
     events = get_events(monitor_id, limit=200)
     price_key = "price" if mon.get("type") == "product" else "flight_price"
@@ -320,6 +324,7 @@ def monitor_detail_page(monitor_id):
     cg = mon.get("comparison_group", "")
     if cg:
         comparison = [m for m in list_monitors(comparison_group=cg) if m["id"] != monitor_id]
+    role = session.get("role", ROLE_ADMIN)
     return render_template(
         "monitor_detail.html",
         mon=mon,
@@ -327,7 +332,9 @@ def monitor_detail_page(monitor_id):
         price_history=price_history,
         monitoring=_monitor_running,
         comparison=comparison,
-        role=session.get("role", "admin"),
+        role=role,
+        role_admin=ROLE_ADMIN,
+        is_admin=role == ROLE_ADMIN,
         username=session.get("username", ""),
     )
 
@@ -450,7 +457,7 @@ def api_update_monitor(monitor_id):
         "flight_return_date", "flight_max_price", "flight_airline_pref",
         "notify_enabled",
     }
-    if session.get("role") == "admin":
+    if session.get("role") == ROLE_ADMIN:
         safe_keys.add("created_by")
     updates = {k: v for k, v in data.items() if k in safe_keys}
     if "tags" in updates:
@@ -1281,7 +1288,7 @@ def api_change_role(user_id):
 
     data = request.get_json(force=True)
     new_role = data.get("role", "").strip().lower()
-    if new_role not in ("viewer", "admin"):
+    if new_role not in ("viewer", ROLE_ADMIN):
         return jsonify(ok=False, error="Invalid role"), 400
 
     users = list_users()
@@ -1566,7 +1573,7 @@ def _digest_loop() -> None:
 @app.route("/api/status")
 @require_auth
 def api_status():
-    is_admin = session.get("role") == "admin"
+    is_admin = session.get("role") == ROLE_ADMIN
     username = session.get("username", "")
     if is_admin:
         monitors = list_monitors()

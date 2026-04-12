@@ -79,10 +79,10 @@ details .inner{margin-top:.85rem;}
 </head>
 <body>
 <header>
-  <h1>Price Monitor{% if role == 'admin' %} Admin{% endif %}<span class="role-badge">{{ role }}</span></h1>
+  <h1>Price Monitor{% if is_admin %} Admin{% endif %}<span class="role-badge">{{ role }}</span></h1>
   <div class="hdr-r">
     <span style="font-size:.82rem;opacity:.9;">{{ username }}</span>
-    {% if role == 'admin' %}
+    {% if is_admin %}
     <span class="badge {{ 'b-active' if monitoring else 'b-paused' }}" id="badge-mon">{{ 'Monitoring' if monitoring else 'Idle' }}</span>
     {% endif %}
     <button onclick="toggleTheme()">Theme</button>
@@ -106,7 +106,7 @@ details .inner{margin-top:.85rem;}
       <button class="btn bp" onclick="openCreate('product')">+ Product</button>
       <button class="btn bp" onclick="openCreate('flight')">+ Flight</button>
     </div>
-    {% if role == 'admin' %}
+    {% if is_admin %}
     <div class="br" style="margin:0">
       <button class="btn bo" onclick="exportAll()">Export All</button>
       <button class="btn bo" onclick="$('import-file').click()">Import</button>
@@ -127,7 +127,7 @@ details .inner{margin-top:.85rem;}
     <select name="status"><option value="">All statuses</option><option value="active" {{ 'selected' if filt_status=='active' }}>Active</option><option value="paused" {{ 'selected' if filt_status=='paused' }}>Paused</option><option value="completed" {{ 'selected' if filt_status=='completed' }}>Completed</option><option value="expired" {{ 'selected' if filt_status=='expired' }}>Expired</option></select>
     <select name="category"><option value="">All categories</option>{% for c in categories %}<option value="{{ c }}" {{ 'selected' if filt_category==c }}>{{ c }}</option>{% endfor %}</select>
     <select name="tag"><option value="">All tags</option>{% for t in all_tags %}<option value="{{ t }}" {{ 'selected' if filt_tag==t }}>{{ t }}</option>{% endfor %}</select>
-    {% if role == 'admin' %}<select name="creator"><option value="">All creators</option>{% for c in creators %}<option value="{{ c }}" {{ 'selected' if filt_creator==c }}>{{ c }}</option>{% endfor %}</select>{% endif %}
+    {% if is_admin %}<select name="creator"><option value="">All creators</option>{% for c in creators %}<option value="{{ c }}" {{ 'selected' if filt_creator==c }}>{{ c }}</option>{% endfor %}</select>{% endif %}
     <button type="submit" class="btn bo">Filter</button>
     <a href="/" class="btn bo">Clear</a>
   </form>
@@ -136,14 +136,14 @@ details .inner{margin-top:.85rem;}
   <div style="overflow-x:auto">
   <table>
     <thead><tr>
-      {% if role == 'admin' %}<th><input type="checkbox" id="sel-all" onchange="toggleAll(this)"></th>{% endif %}
-      <th>Name</th><th>Type</th><th>Status</th><th>Last Price</th><th>Last Checked</th>{% if role == 'admin' %}<th>Created by</th>{% endif %}<th>Tags</th>
+      {% if is_admin %}<th><input type="checkbox" id="sel-all" onchange="toggleAll(this)"></th>{% endif %}
+      <th>Name</th><th>Type</th><th>Status</th><th>Last Price</th><th>Last Checked</th>{% if is_admin %}<th>Created by</th>{% endif %}<th>Tags</th>
       <th>Actions</th>
     </tr></thead>
     <tbody>
     {% for m in monitors %}
     <tr>
-      {% if role == 'admin' %}<td><input type="checkbox" class="sel-cb" value="{{ m.id }}" onchange="updateBulk()"></td>{% endif %}
+      {% if is_admin %}<td><input type="checkbox" class="sel-cb" value="{{ m.id }}" onchange="updateBulk()"></td>{% endif %}
       <td>
         {% set errs = m.get('consecutive_errors', 0) %}
         <span class="health-dot {{ 'h-ok' if errs == 0 else ('h-warn' if errs <= 2 else 'h-err') }}" title="{{ m.get('last_error_msg','OK') }}"></span>
@@ -165,7 +165,7 @@ details .inner{margin-top:.85rem;}
         {% endif %}
       </td>
       <td style="font-size:.78rem">{{ mlc[:19] if mlc else '—' }}</td>
-      {% if role == 'admin' %}<td style="font-size:.8rem">{{ m.get('created_by','') or '—' }}</td>{% endif %}
+      {% if is_admin %}<td style="font-size:.8rem">{{ m.get('created_by','') or '—' }}</td>{% endif %}
       <td>{% for tag in (m.get('tags') or []) %}<span class="tag">{{ tag }}</span>{% endfor %}{% if not m.get('tags') and m.get('category') %}<span class="tag">{{ m.category }}</span>{% endif %}</td>
       <td>
         <div class="actions">
@@ -177,7 +177,7 @@ details .inner{margin-top:.85rem;}
           {% elif m.status == 'paused' or m.status == 'expired' %}
             <button class="btn bs" onclick="resumeMon('{{ m.id }}')">Resume</button>
           {% endif %}
-          {% if role == 'admin' %}<button class="btn bo" onclick="dupMon('{{ m.id }}')">Dup</button>{% endif %}
+          {% if is_admin %}<button class="btn bo" onclick="dupMon('{{ m.id }}')">Dup</button>{% endif %}
           <button class="btn bd" onclick="delMon('{{ m.id }}','{{ m.name|e }}')">Del</button>
         </div>
       </td>
@@ -207,7 +207,7 @@ details .inner{margin-top:.85rem;}
       <div class="fg"><label>ntfy server</label><input type="text" id="n-ntfy-server" value="https://ntfy.sh"></div>
       <p class="hint" style="margin-bottom:.6rem">Free push notifications to your phone. Install the <a href="https://ntfy.sh" target="_blank" style="color:var(--primary)">ntfy app</a> and subscribe to your topic.</p>
 
-      {% if role == 'admin' %}
+      {% if is_admin %}
       <hr style="margin:.8rem 0;border:none;border-top:1px solid var(--border)">
       <p class="hint" style="margin-bottom:.5rem;font-weight:500;color:var(--text)">SMTP Server Config (admin only)</p>
       <p class="hint" style="margin-bottom:.6rem">Mail server for sending email alerts. Defaults to Gmail SMTP — just enter your Gmail and <a href="https://myaccount.google.com/apppasswords" target="_blank" style="color:var(--primary)">app password</a>.</p>
@@ -254,7 +254,7 @@ details .inner{margin-top:.85rem;}
 </div>
 {% endif %}
 
-{% if role == 'admin' %}
+{% if is_admin %}
 <!-- Audit Log -->
 <div class="card">
   <details>
@@ -285,7 +285,7 @@ details .inner{margin-top:.85rem;}
 </div>
 {% endif %}
 
-{% if role == 'admin' %}
+{% if is_admin %}
 <!-- User Management -->
 <div class="card">
   <details id="user-mgmt-details">
@@ -454,10 +454,11 @@ details .inner{margin-top:.85rem;}
 <script>
 const $=id=>document.getElementById(id);
 const _role='{{ role }}';
+const _roleAdmin='{{ role_admin }}';
 const _username='{{ username }}';
 const _primaryAdmin='{{ primary_admin }}';
 const _isPrimaryAdmin=_username===_primaryAdmin;
-const _isAdmin=_role==='admin';
+const _isAdmin={{ 'true' if is_admin else 'false' }};
 let evtSource=null;
 
 function toast(m,ok=true){const t=$('toast');t.textContent=m;t.className='toast '+(ok?'toast-ok':'toast-err')+' show';clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),3500);}
@@ -760,7 +761,7 @@ $('modal-create').addEventListener('click',e=>{if(e.target===$('modal-create'))c
 if($('modal-self-delete'))$('modal-self-delete').addEventListener('click',e=>{if(e.target===$('modal-self-delete'))$('modal-self-delete').classList.remove('show');});
 $('modal-check-result').addEventListener('click',e=>{if(e.target===$('modal-check-result'))$('modal-check-result').classList.remove('show');});
 
-{% if role == 'admin' %}
+{% if is_admin %}
 /* ════════════ ADMIN-ONLY JS ════════════ */
 
 /* Bulk */
@@ -822,12 +823,12 @@ async function loadUsers(){
       const isSelf=u.username===_username;
       let roleCell='';
       if(isPrimary){
-        roleCell='<span class="badge b-active">admin</span>';
+        roleCell='<span class="badge b-active">'+_roleAdmin+'</span>';
       }else if(_isPrimaryAdmin){
-        const roleOpts=['viewer','admin'].map(r=>'<option value="'+r+'"'+(r===u.role?' selected':'')+'>'+r+'</option>').join('');
+        const roleOpts=['viewer',_roleAdmin].map(r=>'<option value="'+r+'"'+(r===u.role?' selected':'')+'>'+r+'</option>').join('');
         roleCell='<select onchange="changeRole(\''+u.id+'\',this.value,\''+esc(u.username)+'\')" style="font-size:.78rem;padding:.2rem .4rem;width:auto;">'+roleOpts+'</select>';
       }else{
-        roleCell='<span class="badge '+(u.role==='admin'?'b-active':'b-paused')+'">'+u.role+'</span>';
+        roleCell='<span class="badge '+(u.role===_roleAdmin?'b-active':'b-paused')+'">'+u.role+'</span>';
       }
       let actions='';
       if(isPrimary){
@@ -863,7 +864,7 @@ async function loadUsers(){
 
 /* Role change (primary admin only) */
 async function changeRole(uid,role,uname){
-  if(role==='admin'){
+  if(role===_roleAdmin){
     if(!confirm('WARNING: You are about to make "'+uname+'" an admin.\n\nAdmins can manage all users, monitors, and settings.\n\nAre you sure?'))
     {loadUsers();return;}
   }else{
