@@ -16,7 +16,6 @@ from typing import Any
 _supabase_client = None
 _json_locks: dict[str, threading.Lock] = {}
 _json_locks_lock = threading.Lock()
-_sb_table_status: dict[str, bool] = {}
 
 
 def _get_supabase():
@@ -34,23 +33,6 @@ def _get_supabase():
 
 def use_supabase() -> bool:
     return _get_supabase() is not None
-
-
-def _sb_table_ok(table_name: str) -> bool:
-    """Check if a Supabase table exists and is accessible. Caches result."""
-    if table_name in _sb_table_status:
-        return _sb_table_status[table_name]
-    sb = _get_supabase()
-    if not sb:
-        _sb_table_status[table_name] = False
-        return False
-    try:
-        sb.table(table_name).select("id").limit(1).execute()
-        _sb_table_status[table_name] = True
-        return True
-    except Exception:
-        _sb_table_status[table_name] = False
-        return False
 
 
 # ── helpers ──────────────────────────────────────────────────────────────
@@ -290,8 +272,9 @@ def add_audit(action: str, target_type: str, target_id: str,
         "details": details or {},
         "created_at": _now_iso(),
     }
-    if _sb_table_ok("audit_log"):
-        resp = _get_supabase().table("audit_log").insert(entry).execute()
+    sb = _get_supabase()
+    if sb:
+        resp = sb.table("audit_log").insert(entry).execute()
         return resp.data[0]
 
     with _file_lock("audit_log.json"):
@@ -309,8 +292,8 @@ def get_audit_log(
     action: str | None = None,
     target_id: str | None = None,
 ) -> list[dict]:
-    if _sb_table_ok("audit_log"):
-        sb = _get_supabase()
+    sb = _get_supabase()
+    if sb:
         q = sb.table("audit_log").select("*").order("created_at", desc=True).limit(limit)
         if action:
             q = q.eq("action", action)
@@ -338,8 +321,9 @@ def create_user(user: dict) -> dict:
     user.setdefault("role", "viewer")
     user.setdefault("created_at", _now_iso())
 
-    if _sb_table_ok("users"):
-        resp = _get_supabase().table("users").insert(user).execute()
+    sb = _get_supabase()
+    if sb:
+        resp = sb.table("users").insert(user).execute()
         return resp.data[0]
 
     with _file_lock("users.json"):
@@ -350,8 +334,9 @@ def create_user(user: dict) -> dict:
 
 
 def get_user_by_username(username: str) -> dict | None:
-    if _sb_table_ok("users"):
-        resp = _get_supabase().table("users").select("*").eq("username", username).execute()
+    sb = _get_supabase()
+    if sb:
+        resp = sb.table("users").select("*").eq("username", username).execute()
         return resp.data[0] if resp.data else None
 
     for u in _read_json("users.json"):
@@ -369,8 +354,9 @@ def verify_user(username: str, password: str) -> dict | None:
 
 
 def list_users() -> list[dict]:
-    if _sb_table_ok("users"):
-        resp = _get_supabase().table("users").select("id, username, role, created_at").order("created_at").execute()
+    sb = _get_supabase()
+    if sb:
+        resp = sb.table("users").select("id, username, role, created_at").order("created_at").execute()
         return resp.data
 
     return [
@@ -380,15 +366,17 @@ def list_users() -> list[dict]:
 
 
 def count_users() -> int:
-    if _sb_table_ok("users"):
-        resp = _get_supabase().table("users").select("id", count="exact").execute()
+    sb = _get_supabase()
+    if sb:
+        resp = sb.table("users").select("id", count="exact").execute()
         return resp.count or 0
     return len(_read_json("users.json"))
 
 
 def update_user(user_id: str, updates: dict) -> dict | None:
-    if _sb_table_ok("users"):
-        resp = _get_supabase().table("users").update(updates).eq("id", user_id).execute()
+    sb = _get_supabase()
+    if sb:
+        resp = sb.table("users").update(updates).eq("id", user_id).execute()
         return resp.data[0] if resp.data else None
 
     with _file_lock("users.json"):
@@ -402,8 +390,9 @@ def update_user(user_id: str, updates: dict) -> dict | None:
 
 
 def delete_user(user_id: str) -> bool:
-    if _sb_table_ok("users"):
-        _get_supabase().table("users").delete().eq("id", user_id).execute()
+    sb = _get_supabase()
+    if sb:
+        sb.table("users").delete().eq("id", user_id).execute()
         return True
 
     with _file_lock("users.json"):
@@ -423,7 +412,13 @@ def delete_user(user_id: str) -> bool:
 def create_delete_request(req: dict) -> dict:
     req.setdefault("id", str(uuid.uuid4()))
     req.setdefault("status", "pending")
+    req.setdefault("acknowledged", False)
     req.setdefault("created_at", _now_iso())
+
+    sb = _get_supabase()
+    if sb:
+        resp = sb.table("delete_requests").insert(req).execute()
+        return resp.data[0]
 
     with _file_lock("delete_requests.json"):
         all_r = _read_json("delete_requests.json")
@@ -433,6 +428,13 @@ def create_delete_request(req: dict) -> dict:
 
 
 def list_delete_requests(*, status: str | None = None) -> list[dict]:
+    sb = _get_supabase()
+    if sb:
+        q = sb.table("delete_requests").select("*").order("created_at", desc=True)
+        if status:
+            q = q.eq("status", status)
+        return q.execute().data
+
     all_r = _read_json("delete_requests.json")
     if status:
         all_r = [r for r in all_r if r.get("status") == status]
@@ -440,6 +442,11 @@ def list_delete_requests(*, status: str | None = None) -> list[dict]:
 
 
 def get_delete_request(req_id: str) -> dict | None:
+    sb = _get_supabase()
+    if sb:
+        resp = sb.table("delete_requests").select("*").eq("id", req_id).execute()
+        return resp.data[0] if resp.data else None
+
     for r in _read_json("delete_requests.json"):
         if r["id"] == req_id:
             return r
@@ -447,6 +454,11 @@ def get_delete_request(req_id: str) -> dict | None:
 
 
 def update_delete_request(req_id: str, updates: dict) -> dict | None:
+    sb = _get_supabase()
+    if sb:
+        resp = sb.table("delete_requests").update(updates).eq("id", req_id).execute()
+        return resp.data[0] if resp.data else None
+
     with _file_lock("delete_requests.json"):
         all_r = _read_json("delete_requests.json")
         for r in all_r:
@@ -481,149 +493,3 @@ def save_settings(config: dict) -> None:
 
     with _file_lock("settings.json"):
         _write_json("settings.json", [config])
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# SUPABASE TABLE INIT (run once to create tables)
-# ═══════════════════════════════════════════════════════════════════════
-
-SUPABASE_SCHEMA_SQL = """
--- Run this in the Supabase SQL editor to create the required tables.
-
-CREATE TABLE IF NOT EXISTS monitors (
-    id TEXT PRIMARY KEY,
-    type TEXT NOT NULL DEFAULT 'product',
-    status TEXT NOT NULL DEFAULT 'active',
-    name TEXT NOT NULL DEFAULT '',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    created_by TEXT NOT NULL DEFAULT 'admin',
-    category TEXT NOT NULL DEFAULT '',
-    tags JSONB NOT NULL DEFAULT '[]',
-    check_interval_min INTEGER NOT NULL DEFAULT 60,
-    last_checked_at TIMESTAMPTZ,
-    next_check_at TIMESTAMPTZ,
-
-    -- alert settings
-    alert_mode TEXT NOT NULL DEFAULT 'budget',
-    alert_drop_percent DOUBLE PRECISION,
-    highest_price DOUBLE PRECISION,
-    highest_fare DOUBLE PRECISION,
-
-    -- health tracking
-    consecutive_errors INTEGER NOT NULL DEFAULT 0,
-    last_error_at TIMESTAMPTZ,
-    last_error_msg TEXT,
-
-    -- comparison
-    comparison_group TEXT NOT NULL DEFAULT '',
-
-    -- product fields
-    url TEXT,
-    budget DOUBLE PRECISION,
-    price_selector TEXT,
-    monitor_until TEXT,
-    last_price DOUBLE PRECISION,
-
-    -- train fields
-    train_number TEXT,
-    train_name TEXT,
-    from_station TEXT,
-    to_station TEXT,
-    travel_date TEXT,
-    class_code TEXT,
-    quota TEXT,
-    fare_budget DOUBLE PRECISION,
-    last_fare DOUBLE PRECISION,
-    last_availability TEXT,
-
-    -- flight fields
-    flight_origin TEXT,
-    flight_destination TEXT,
-    flight_date TEXT,
-    flight_return_date TEXT,
-    flight_max_price DOUBLE PRECISION,
-    flight_airline_pref TEXT,
-    last_flight_price DOUBLE PRECISION,
-
-    -- notification dedup
-    notified_budget BOOLEAN NOT NULL DEFAULT FALSE,
-    notified_available BOOLEAN NOT NULL DEFAULT FALSE
-);
-
-CREATE TABLE IF NOT EXISTS events (
-    id TEXT PRIMARY KEY,
-    monitor_id TEXT NOT NULL REFERENCES monitors(id) ON DELETE CASCADE,
-    event_type TEXT NOT NULL,
-    details JSONB NOT NULL DEFAULT '{}',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE INDEX IF NOT EXISTS idx_events_monitor ON events(monitor_id, created_at DESC);
-
-CREATE TABLE IF NOT EXISTS settings (
-    id TEXT PRIMARY KEY,
-    config JSONB NOT NULL DEFAULT '{}'
-);
-
-CREATE TABLE IF NOT EXISTS audit_log (
-    id TEXT PRIMARY KEY,
-    action TEXT NOT NULL,
-    target_type TEXT NOT NULL DEFAULT '',
-    target_id TEXT NOT NULL DEFAULT '',
-    target_name TEXT NOT NULL DEFAULT '',
-    user_role TEXT NOT NULL DEFAULT 'admin',
-    details JSONB NOT NULL DEFAULT '{}',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at DESC);
-
-CREATE TABLE IF NOT EXISTS users (
-    id TEXT PRIMARY KEY,
-    username TEXT UNIQUE NOT NULL,
-    password_hash TEXT NOT NULL,
-    role TEXT NOT NULL DEFAULT 'viewer',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON users(username);
-"""
-
-SUPABASE_MIGRATION_SQL = """
--- Run this to add new columns to an EXISTING monitors table.
-
-ALTER TABLE monitors ADD COLUMN IF NOT EXISTS tags JSONB NOT NULL DEFAULT '[]';
-ALTER TABLE monitors ADD COLUMN IF NOT EXISTS alert_mode TEXT NOT NULL DEFAULT 'budget';
-ALTER TABLE monitors ADD COLUMN IF NOT EXISTS alert_drop_percent DOUBLE PRECISION;
-ALTER TABLE monitors ADD COLUMN IF NOT EXISTS highest_price DOUBLE PRECISION;
-ALTER TABLE monitors ADD COLUMN IF NOT EXISTS highest_fare DOUBLE PRECISION;
-ALTER TABLE monitors ADD COLUMN IF NOT EXISTS consecutive_errors INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE monitors ADD COLUMN IF NOT EXISTS last_error_at TIMESTAMPTZ;
-ALTER TABLE monitors ADD COLUMN IF NOT EXISTS last_error_msg TEXT;
-ALTER TABLE monitors ADD COLUMN IF NOT EXISTS comparison_group TEXT NOT NULL DEFAULT '';
-ALTER TABLE monitors ADD COLUMN IF NOT EXISTS flight_origin TEXT;
-ALTER TABLE monitors ADD COLUMN IF NOT EXISTS flight_destination TEXT;
-ALTER TABLE monitors ADD COLUMN IF NOT EXISTS flight_date TEXT;
-ALTER TABLE monitors ADD COLUMN IF NOT EXISTS flight_return_date TEXT;
-ALTER TABLE monitors ADD COLUMN IF NOT EXISTS flight_max_price DOUBLE PRECISION;
-ALTER TABLE monitors ADD COLUMN IF NOT EXISTS flight_airline_pref TEXT;
-ALTER TABLE monitors ADD COLUMN IF NOT EXISTS last_flight_price DOUBLE PRECISION;
-
-CREATE TABLE IF NOT EXISTS audit_log (
-    id TEXT PRIMARY KEY,
-    action TEXT NOT NULL,
-    target_type TEXT NOT NULL DEFAULT '',
-    target_id TEXT NOT NULL DEFAULT '',
-    target_name TEXT NOT NULL DEFAULT '',
-    user_role TEXT NOT NULL DEFAULT 'admin',
-    details JSONB NOT NULL DEFAULT '{}',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at DESC);
-
-CREATE TABLE IF NOT EXISTS users (
-    id TEXT PRIMARY KEY,
-    username TEXT UNIQUE NOT NULL,
-    password_hash TEXT NOT NULL,
-    role TEXT NOT NULL DEFAULT 'viewer',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON users(username);
-"""

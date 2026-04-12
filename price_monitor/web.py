@@ -1525,10 +1525,7 @@ def _keep_alive_loop() -> None:
             pass
 
 
-try:
-    _ensure_admin_exists()
-except Exception as exc:
-    _logger.error("STARTUP     | Failed to ensure admin exists: %s", str(exc)[:300])
+_ensure_admin_exists()
 
 
 def _deferred_bootstrap() -> None:

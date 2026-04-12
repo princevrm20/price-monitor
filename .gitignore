@@ -7,4 +7,9 @@ data/events.json
 data/settings.json
 data/audit_log.json
 data/trains.json
+data/users.json
+data/delete_requests.json
+data/price_monitor.log
+data/price_monitor.log.*
 debug_output.html
+test_simulation*.py
