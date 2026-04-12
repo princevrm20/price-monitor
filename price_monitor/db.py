@@ -16,6 +16,7 @@ from typing import Any
 _supabase_client = None
 _json_locks: dict[str, threading.Lock] = {}
 _json_locks_lock = threading.Lock()
+_sb_table_status: dict[str, bool] = {}
 
 
 def _get_supabase():
@@ -33,6 +34,23 @@ def _get_supabase():
 
 def use_supabase() -> bool:
     return _get_supabase() is not None
+
+
+def _sb_table_ok(table_name: str) -> bool:
+    """Check if a Supabase table exists and is accessible. Caches result."""
+    if table_name in _sb_table_status:
+        return _sb_table_status[table_name]
+    sb = _get_supabase()
+    if not sb:
+        _sb_table_status[table_name] = False
+        return False
+    try:
+        sb.table(table_name).select("id").limit(1).execute()
+        _sb_table_status[table_name] = True
+        return True
+    except Exception:
+        _sb_table_status[table_name] = False
+        return False
 
 
 # ── helpers ──────────────────────────────────────────────────────────────
@@ -272,9 +290,8 @@ def add_audit(action: str, target_type: str, target_id: str,
         "details": details or {},
         "created_at": _now_iso(),
     }
-    sb = _get_supabase()
-    if sb:
-        resp = sb.table("audit_log").insert(entry).execute()
+    if _sb_table_ok("audit_log"):
+        resp = _get_supabase().table("audit_log").insert(entry).execute()
         return resp.data[0]
 
     with _file_lock("audit_log.json"):
@@ -292,8 +309,8 @@ def get_audit_log(
     action: str | None = None,
     target_id: str | None = None,
 ) -> list[dict]:
-    sb = _get_supabase()
-    if sb:
+    if _sb_table_ok("audit_log"):
+        sb = _get_supabase()
         q = sb.table("audit_log").select("*").order("created_at", desc=True).limit(limit)
         if action:
             q = q.eq("action", action)
@@ -321,9 +338,8 @@ def create_user(user: dict) -> dict:
     user.setdefault("role", "viewer")
     user.setdefault("created_at", _now_iso())
 
-    sb = _get_supabase()
-    if sb:
-        resp = sb.table("users").insert(user).execute()
+    if _sb_table_ok("users"):
+        resp = _get_supabase().table("users").insert(user).execute()
         return resp.data[0]
 
     with _file_lock("users.json"):
@@ -334,9 +350,8 @@ def create_user(user: dict) -> dict:
 
 
 def get_user_by_username(username: str) -> dict | None:
-    sb = _get_supabase()
-    if sb:
-        resp = sb.table("users").select("*").eq("username", username).execute()
+    if _sb_table_ok("users"):
+        resp = _get_supabase().table("users").select("*").eq("username", username).execute()
         return resp.data[0] if resp.data else None
 
     for u in _read_json("users.json"):
@@ -354,9 +369,8 @@ def verify_user(username: str, password: str) -> dict | None:
 
 
 def list_users() -> list[dict]:
-    sb = _get_supabase()
-    if sb:
-        resp = sb.table("users").select("id, username, role, created_at").order("created_at").execute()
+    if _sb_table_ok("users"):
+        resp = _get_supabase().table("users").select("id, username, role, created_at").order("created_at").execute()
         return resp.data
 
     return [
@@ -366,17 +380,15 @@ def list_users() -> list[dict]:
 
 
 def count_users() -> int:
-    sb = _get_supabase()
-    if sb:
-        resp = sb.table("users").select("id", count="exact").execute()
+    if _sb_table_ok("users"):
+        resp = _get_supabase().table("users").select("id", count="exact").execute()
         return resp.count or 0
     return len(_read_json("users.json"))
 
 
 def update_user(user_id: str, updates: dict) -> dict | None:
-    sb = _get_supabase()
-    if sb:
-        resp = sb.table("users").update(updates).eq("id", user_id).execute()
+    if _sb_table_ok("users"):
+        resp = _get_supabase().table("users").update(updates).eq("id", user_id).execute()
         return resp.data[0] if resp.data else None
 
     with _file_lock("users.json"):
@@ -390,9 +402,8 @@ def update_user(user_id: str, updates: dict) -> dict | None:
 
 
 def delete_user(user_id: str) -> bool:
-    sb = _get_supabase()
-    if sb:
-        sb.table("users").delete().eq("id", user_id).execute()
+    if _sb_table_ok("users"):
+        _get_supabase().table("users").delete().eq("id", user_id).execute()
         return True
 
     with _file_lock("users.json"):
