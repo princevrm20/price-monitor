@@ -442,29 +442,39 @@ def _walk_ld_for_name(obj: Any) -> str | None:
 
 def detect_sold_out(html: str, product_url: str | None = None) -> bool:
     """Detect if a product page indicates the item is sold out / unavailable."""
-    lower = html.lower()
-
-    sold_out_phrases = [
-        "currently sold out",
-        "currently unavailable",
-        "out of stock",
-        "this item is no longer available",
-        "no longer available",
-        "this product is currently sold out",
-        "sold out online",
-        "not available",
-    ]
-    for phrase in sold_out_phrases:
-        if phrase in lower:
-            return True
-
     soup = _make_soup(html)
 
-    availability_meta = _meta_content(soup, "product:availability") or ""
+    # 1. Check visible page text (body only, not scripts) for sold-out phrases
+    body = soup.body
+    if body:
+        for script_tag in body.find_all(["script", "style"]):
+            script_tag.decompose()
+        visible_text = body.get_text(" ", strip=True).lower()
+
+        sold_out_phrases = [
+            "currently sold out",
+            "currently unavailable",
+            "this product is currently sold out",
+            "this item is no longer available",
+            "item is currently out of stock",
+            "sold out online",
+            "product is out of stock",
+            "out of stock",
+        ]
+        for phrase in sold_out_phrases:
+            if phrase in visible_text:
+                return True
+
+    # Re-parse since we modified the soup above
+    soup2 = _make_soup(html)
+
+    # 2. Meta tag availability
+    availability_meta = _meta_content(soup2, "product:availability") or ""
     if availability_meta.lower() in ("oos", "out of stock", "outofstock"):
         return True
 
-    for script in soup.find_all("script", type="application/ld+json"):
+    # 3. JSON-LD structured data availability
+    for script in soup2.find_all("script", type="application/ld+json"):
         raw = script.string or script.get_text() or ""
         try:
             data = json.loads(raw)
