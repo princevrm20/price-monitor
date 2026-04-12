@@ -137,7 +137,7 @@ details .inner{margin-top:.85rem;}
   <table>
     <thead><tr>
       {% if role == 'admin' %}<th><input type="checkbox" id="sel-all" onchange="toggleAll(this)"></th>{% endif %}
-      <th>Name</th><th>Type</th><th>Status</th><th>Last Value</th><th>Last Check</th>{% if role == 'admin' %}<th>Created by</th>{% endif %}<th>Tags</th>
+      <th>Name</th><th>Type</th><th>Status</th><th>Last Price</th><th>Last Checked</th>{% if role == 'admin' %}<th>Created by</th>{% endif %}<th>Tags</th>
       <th>Actions</th>
     </tr></thead>
     <tbody>
@@ -166,7 +166,7 @@ details .inner{margin-top:.85rem;}
       <td>{% for tag in (m.get('tags') or []) %}<span class="tag">{{ tag }}</span>{% endfor %}{% if not m.get('tags') and m.get('category') %}<span class="tag">{{ m.category }}</span>{% endif %}</td>
       <td>
         <div class="actions">
-          <button class="btn bo" onclick="checkMon('{{ m.id }}',this)">Check</button>
+          <button class="btn bp" onclick="checkMon('{{ m.id }}',this)" style="font-size:.7rem">Check Price</button>
           {% if m.status == 'active' %}
             <button class="btn bw" onclick="pauseMon('{{ m.id }}')">Pause</button>
           {% elif m.status == 'paused' or m.status == 'expired' %}
@@ -421,6 +421,19 @@ details .inner{margin-top:.85rem;}
   <button class="btn bd" onclick="bulkAction('delete')">Delete Selected</button>
 </div>
 
+<!-- Check Price Result Modal -->
+<div class="modal-bg" id="modal-check-result">
+<div class="modal" style="max-width:480px;">
+  <h2 id="cr-title" style="margin-bottom:.3rem">Price Check Result</h2>
+  <p id="cr-time" style="font-size:.75rem;color:var(--muted);margin-bottom:1rem"></p>
+  <div id="cr-body"></div>
+  <div class="br" style="margin-top:1.2rem">
+    <a id="cr-link" href="#" target="_blank" class="btn bp" style="display:none">View Product Page</a>
+    <button class="btn bo" onclick="$('modal-check-result').classList.remove('show')">Close</button>
+  </div>
+</div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
@@ -460,7 +473,76 @@ async function submitCreate(){
 }
 
 /* Actions */
-async function checkMon(id,btn){if(!confirm('Run a price check now?'))return;btn.disabled=true;btn.textContent='...';const r=await fetch('/api/monitors/'+id+'/check',{method:'POST'});const j=await r.json();j.ok?toast('Check complete'):toast(j.error||'Failed',false);btn.disabled=false;btn.textContent='Check';if(typeof poll==='function')poll();}
+async function checkMon(id,btn){
+  btn.disabled=true;btn.textContent='Checking...';
+  try{
+    const r=await fetch('/api/monitors/'+id+'/check',{method:'POST'});
+    const j=await r.json();
+    btn.disabled=false;btn.textContent='Check Price';
+    if(j.ok&&j.monitor){
+      showCheckResult(j.monitor);
+    }else{
+      toast(j.error||'Price check failed',false);
+    }
+  }catch(e){
+    btn.disabled=false;btn.textContent='Check Price';
+    toast('Network error during price check',false);
+  }
+  if(typeof poll==='function')poll();
+}
+function showCheckResult(m){
+  $('cr-title').textContent=m.name||'Price Check Result';
+  const now=m.last_checked_at?new Date(m.last_checked_at).toLocaleString():'Just now';
+  $('cr-time').textContent='Checked: '+now;
+  let html='<div style="display:grid;gap:.6rem">';
+  if(m.type==='product'){
+    const price=m.last_price;
+    const budget=m.budget;
+    const priceFmt=price!=null?'₹'+Number(price).toLocaleString():'Could not detect';
+    const budgetFmt=budget!=null?'₹'+Number(budget).toLocaleString():'Not set';
+    let priceColor='var(--text)';let priceLabel='';
+    if(price!=null&&budget!=null){
+      if(price<=budget){priceColor='var(--success)';priceLabel=' — Below budget!';}
+      else{priceColor='var(--danger)';priceLabel=' — Above budget';}
+    }
+    html+='<div style="background:var(--bg);border-radius:8px;padding:1rem;text-align:center">';
+    html+='<div style="font-size:.75rem;text-transform:uppercase;color:var(--muted);margin-bottom:.3rem">Current Price</div>';
+    html+='<div style="font-size:1.8rem;font-weight:700;color:'+priceColor+'">'+priceFmt+'</div>';
+    if(priceLabel)html+='<div style="font-size:.82rem;color:'+priceColor+';margin-top:.2rem">'+priceLabel+'</div>';
+    html+='</div>';
+    html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem">';
+    html+='<div style="background:var(--bg);border-radius:6px;padding:.7rem"><div style="font-size:.7rem;text-transform:uppercase;color:var(--muted)">Your Budget</div><div style="font-size:1.1rem;font-weight:600">'+budgetFmt+'</div></div>';
+    const peak=m.highest_price;
+    const peakFmt=peak!=null?'₹'+Number(peak).toLocaleString():'N/A';
+    html+='<div style="background:var(--bg);border-radius:6px;padding:.7rem"><div style="font-size:.7rem;text-transform:uppercase;color:var(--muted)">Highest Seen</div><div style="font-size:1.1rem;font-weight:600">'+peakFmt+'</div></div>';
+    html+='</div>';
+    if(m.url){$('cr-link').href=m.url;$('cr-link').style.display='';$('cr-link').textContent='View Product Page';}
+    else{$('cr-link').style.display='none';}
+  }else if(m.type==='flight'){
+    const price=m.last_flight_price;
+    const maxP=m.flight_max_price;
+    const priceFmt=price!=null?'₹'+Number(price).toLocaleString():'Could not fetch';
+    const maxFmt=maxP!=null?'₹'+Number(maxP).toLocaleString():'Not set';
+    let priceColor='var(--text)';
+    if(price!=null&&maxP!=null){priceColor=price<=maxP?'var(--success)':'var(--danger)';}
+    html+='<div style="background:var(--bg);border-radius:8px;padding:1rem;text-align:center">';
+    html+='<div style="font-size:.75rem;text-transform:uppercase;color:var(--muted);margin-bottom:.3rem">Lowest Flight Price</div>';
+    html+='<div style="font-size:1.8rem;font-weight:700;color:'+priceColor+'">'+priceFmt+'</div>';
+    html+='</div>';
+    html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem">';
+    html+='<div style="background:var(--bg);border-radius:6px;padding:.7rem"><div style="font-size:.7rem;text-transform:uppercase;color:var(--muted)">Route</div><div style="font-size:1rem;font-weight:600">'+(m.flight_origin||'?')+' → '+(m.flight_destination||'?')+'</div></div>';
+    html+='<div style="background:var(--bg);border-radius:6px;padding:.7rem"><div style="font-size:.7rem;text-transform:uppercase;color:var(--muted)">Max Budget</div><div style="font-size:1.1rem;font-weight:600">'+maxFmt+'</div></div>';
+    html+='</div>';
+    $('cr-link').style.display='none';
+  }
+  html+='<div style="font-size:.78rem;color:var(--muted);margin-top:.3rem">';
+  html+='Status: <span class="badge b-'+m.status+'">'+m.status+'</span>';
+  if(m.alert_mode)html+=' &nbsp;·&nbsp; Alert mode: '+m.alert_mode;
+  html+='</div>';
+  html+='</div>';
+  $('cr-body').innerHTML=html;
+  $('modal-check-result').classList.add('show');
+}
 async function pauseMon(id){if(!confirm('Pause this monitor? It will stop checking prices until you resume it.'))return;await fetch('/api/monitors/'+id+'/pause',{method:'POST'});toast('Paused');location.reload();}
 async function resumeMon(id){if(!confirm('Resume this monitor? It will start checking prices again.'))return;await fetch('/api/monitors/'+id+'/resume',{method:'POST'});toast('Resumed');location.reload();}
 async function delMon(id,name){if(!confirm('Delete monitor "'+name+'"? This cannot be undone.'))return;await fetch('/api/monitors/'+id,{method:'DELETE'});toast('Deleted');location.reload();}
@@ -508,6 +590,7 @@ async function poll(){try{const r=await(await fetch('/api/status')).json();const
 loadNotify();
 $('modal-create').addEventListener('click',e=>{if(e.target===$('modal-create'))closeModal();});
 if($('modal-self-delete'))$('modal-self-delete').addEventListener('click',e=>{if(e.target===$('modal-self-delete'))$('modal-self-delete').classList.remove('show');});
+$('modal-check-result').addEventListener('click',e=>{if(e.target===$('modal-check-result'))$('modal-check-result').classList.remove('show');});
 
 {% if role == 'admin' %}
 /* ════════════ ADMIN-ONLY JS ════════════ */
