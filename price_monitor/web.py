@@ -508,6 +508,7 @@ def api_resume_monitor(monitor_id):
         return jsonify(ok=False, error="Access denied"), 403
     updated = update_monitor(monitor_id, {
         "status": "active", "notified_budget": False, "notified_available": False,
+        "sold_out": False, "sold_out_reason": None,
     })
     if not updated:
         return jsonify(ok=False, error="Not found"), 404
@@ -711,17 +712,77 @@ def _update_peak(mon: dict, current_value: float | None, peak_key: str) -> dict:
 
 def _do_check_product(mon: dict) -> tuple[dict, dict]:
     from price_monitor.monitor import fetch_html
-    from price_monitor.parser_price import extract_price
+    from price_monitor.parser_price import (
+        detect_sold_out, extract_price, extract_product_name, names_match,
+    )
 
     html = fetch_html(mon["url"])
     _logger.debug("FETCH       | %s | got %d bytes from %s", mon.get("name", "?"), len(html), mon["url"][:80])
+
+    detected_name = extract_product_name(html, mon["url"])
+    is_sold_out = detect_sold_out(html, mon["url"])
     price = extract_price(html, mon.get("price_selector"), mon["url"])
+
     if price is None:
         _logger.warning("NO PRICE    | %s | could not extract price from %s (html=%d bytes, selector=%s)",
                         mon.get("name", "?"), mon["url"][:80], len(html), mon.get("price_selector") or "auto")
-    updates: dict = {"last_price": price, "last_checked_at": datetime.now(timezone.utc).isoformat()}
+
+    updates: dict = {"last_checked_at": datetime.now(timezone.utc).isoformat()}
     details: dict = {"price": price}
 
+    if detected_name:
+        updates["detected_name"] = detected_name
+        details["detected_name"] = detected_name
+
+    name_ok = names_match(mon.get("name", ""), detected_name or "")
+    was_sold_out = mon.get("sold_out", False)
+
+    if is_sold_out or (detected_name and not name_ok):
+        reason = "sold_out" if is_sold_out else "product_replaced"
+        _logger.info("SOLD OUT    | %s | reason=%s detected_name=%s", mon.get("name", "?"), reason, detected_name or "?")
+
+        if not was_sold_out:
+            updates["sold_out"] = True
+            updates["sold_out_reason"] = reason
+            updates["status"] = "paused"
+            details["sold_out"] = True
+            details["sold_out_reason"] = reason
+
+            if mon.get("notify_enabled") is not False:
+                if reason == "sold_out":
+                    body = (f"Your product \"{mon['name']}\" appears to be sold out.\n"
+                            f"Monitoring has been paused automatically.\n"
+                            f"We'll keep checking periodically and notify you when it's back in stock.\n{mon['url']}")
+                else:
+                    body = (f"The page for \"{mon['name']}\" now shows a different product: \"{detected_name}\".\n"
+                            f"The original product may have been discontinued.\n"
+                            f"Monitoring has been paused automatically.\n{mon['url']}")
+                _send_alert(mon, f"Product unavailable: {mon['name']}", body)
+                details["alerted"] = True
+
+            add_event(mon["id"], "sold_out", {"reason": reason, "detected_name": detected_name})
+        else:
+            updates["sold_out"] = True
+
+        return updates, details
+
+    if was_sold_out:
+        _logger.info("BACK IN STOCK | %s | price=%s", mon.get("name", "?"), price)
+        updates["sold_out"] = False
+        updates["sold_out_reason"] = None
+        updates["status"] = "active"
+        details["back_in_stock"] = True
+
+        if mon.get("notify_enabled") is not False and price is not None:
+            body = (f"Great news! \"{mon['name']}\" is back in stock!\n"
+                    f"Current price: {price:g}\n"
+                    f"Monitoring has been resumed automatically.\n{mon['url']}")
+            _send_alert(mon, f"Back in stock: {mon['name']}", body)
+            details["alerted"] = True
+
+        add_event(mon["id"], "back_in_stock", {"price": price, "detected_name": detected_name})
+
+    updates["last_price"] = price
     updates.update(_update_peak(mon, price, "highest_price"))
 
     reasons = _should_alert(mon, price, "price", "budget")
@@ -1344,7 +1405,9 @@ def _monitor_loop() -> None:
                 break
             continue
 
-        for mon in active:
+        sold_out_paused = [m for m in list_monitors(status="paused") if m.get("sold_out")]
+
+        for mon in active + sold_out_paused:
             if not _monitor_running:
                 break
 

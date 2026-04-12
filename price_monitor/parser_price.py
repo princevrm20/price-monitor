@@ -375,6 +375,145 @@ def _generic_price_selectors() -> list[str]:
     ]
 
 
+def extract_product_name(html: str, product_url: str | None = None) -> str | None:
+    """Extract the product name/title from HTML using structured data, meta tags, and selectors."""
+    soup = _make_soup(html)
+
+    # 1. JSON-LD Product name
+    for script in soup.find_all("script", type="application/ld+json"):
+        raw = script.string or script.get_text() or ""
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        name = _walk_ld_for_name(data)
+        if name:
+            return name.strip()
+
+    # 2. Myntra pdpData in inline scripts
+    if _is_myntra_url(product_url):
+        for script in soup.find_all("script"):
+            text = script.string or ""
+            m = re.search(r'"name"\s*:\s*"([^"]{3,120})"', text)
+            if m and "pdpData" in text[:500]:
+                return m.group(1).strip()
+
+    # 3. og:title / twitter:title meta
+    og = _meta_content(soup, "og:title") or _meta_content(soup, "twitter:title")
+    if og and len(og.strip()) > 2:
+        return og.strip()
+
+    # 4. <title> tag
+    title_tag = soup.find("title")
+    if title_tag:
+        raw_title = title_tag.get_text(strip=True)
+        for sep in [" - ", " | ", " – ", " — "]:
+            if sep in raw_title:
+                raw_title = raw_title.split(sep)[0].strip()
+                break
+        if len(raw_title) > 2:
+            return raw_title
+
+    return None
+
+
+def _walk_ld_for_name(obj: Any) -> str | None:
+    if isinstance(obj, dict):
+        t = obj.get("@type")
+        types = t if isinstance(t, list) else ([t] if t else [])
+        if any(str(x).lower() == "product" for x in types if x):
+            name = obj.get("name")
+            if name and isinstance(name, str):
+                return name
+        for v in obj.values():
+            n = _walk_ld_for_name(v)
+            if n:
+                return n
+    elif isinstance(obj, list):
+        for x in obj:
+            n = _walk_ld_for_name(x)
+            if n:
+                return n
+    return None
+
+
+def detect_sold_out(html: str, product_url: str | None = None) -> bool:
+    """Detect if a product page indicates the item is sold out / unavailable."""
+    lower = html.lower()
+
+    sold_out_phrases = [
+        "currently sold out",
+        "currently unavailable",
+        "out of stock",
+        "this item is no longer available",
+        "no longer available",
+        "this product is currently sold out",
+        "sold out online",
+        "not available",
+    ]
+    for phrase in sold_out_phrases:
+        if phrase in lower:
+            return True
+
+    soup = _make_soup(html)
+
+    availability_meta = _meta_content(soup, "product:availability") or ""
+    if availability_meta.lower() in ("oos", "out of stock", "outofstock"):
+        return True
+
+    for script in soup.find_all("script", type="application/ld+json"):
+        raw = script.string or script.get_text() or ""
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if _ld_has_out_of_stock(data):
+            return True
+
+    return False
+
+
+def _ld_has_out_of_stock(obj: Any) -> bool:
+    if isinstance(obj, dict):
+        avail = str(obj.get("availability", "")).lower()
+        if "outofstock" in avail or "soldout" in avail or "discontinued" in avail:
+            return True
+        for v in obj.values():
+            if _ld_has_out_of_stock(v):
+                return True
+    elif isinstance(obj, list):
+        for x in obj:
+            if _ld_has_out_of_stock(x):
+                return True
+    return False
+
+
+def names_match(user_name: str, detected_name: str, threshold: float = 0.3) -> bool:
+    """Check if two product names are similar enough (word overlap ratio).
+
+    Returns True if the overlap is above the threshold, meaning the names match.
+    A threshold of 0.3 means at least 30% of words must overlap.
+    """
+    if not user_name or not detected_name:
+        return True
+
+    def normalize(s: str) -> set[str]:
+        return set(re.sub(r"[^a-z0-9\s]", "", s.lower()).split())
+
+    words_user = normalize(user_name)
+    words_detected = normalize(detected_name)
+
+    if not words_user or not words_detected:
+        return True
+
+    overlap = words_user & words_detected
+    max_words = max(len(words_user), len(words_detected))
+    return len(overlap) / max_words >= threshold
+
+
 def extract_price(html: str, price_selector: str | None, product_url: str | None = None) -> float | None:
     soup = _make_soup(html)
 

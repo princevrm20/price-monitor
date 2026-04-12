@@ -95,7 +95,26 @@ details .inner{margin-top:.85rem;}
     {% else %}
       <span class="tag" style="background:var(--danger)">🔕 Notifications OFF</span>
     {% endif %}
+    {% if mon.get('sold_out') %}
+      <span class="tag" style="background:#dc2626">⚠️ Sold Out</span>
+    {% endif %}
   </div>
+
+  {% if mon.get('detected_name') %}
+  <div style="font-size:.82rem;color:var(--muted);margin-bottom:.5rem;background:var(--bg);padding:.5rem .7rem;border-radius:6px">
+    <strong>Detected product name:</strong> {{ mon.detected_name }}
+  </div>
+  {% endif %}
+
+  {% if mon.get('sold_out') %}
+  <div style="font-size:.82rem;color:var(--danger);margin-bottom:.5rem;background:#fef2f2;padding:.6rem .8rem;border-radius:6px">
+    {% if mon.get('sold_out_reason') == 'product_replaced' %}
+      ⚠️ The page for this product now shows a different item ("{{ mon.get('detected_name', 'unknown') }}"). The original product may have been discontinued. Monitoring is paused. Click "Resume" to force-resume, or it will auto-resume when the product returns.
+    {% else %}
+      ⚠️ This product appears to be sold out. Monitoring is paused automatically. We keep checking periodically and will notify you when it's back in stock. You can also click "Resume" to force-resume monitoring.
+    {% endif %}
+  </div>
+  {% endif %}
 
   {% if mon.get('comparison_group') and comparison %}
   <div class="card" style="background:var(--bg);border:1px dashed var(--border);margin-top:.5rem">
