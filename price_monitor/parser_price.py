@@ -429,7 +429,7 @@ def extract_product_info(html: str, product_url: str | None = None) -> dict:
         if pdp_m:
             result["name"] = pdp_m.group(1).strip()
 
-    # Sold-out check: search visible-ish text (heuristic: avoid <script> blocks)
+    # Sold-out check: search visible text only (strip scripts, styles, AND html tags)
     if not result["sold_out"]:
         sold_out_phrases = [
             "currently sold out",
@@ -440,11 +440,12 @@ def extract_product_info(html: str, product_url: str | None = None) -> dict:
             "sold out online",
             "product is out of stock",
         ]
-        text_chunks = re.sub(r'<script[^>]*>.*?</script>', ' ', html, flags=re.I | re.S)
-        text_chunks = re.sub(r'<style[^>]*>.*?</style>', ' ', text_chunks, flags=re.I | re.S)
-        text_lower = text_chunks.lower()
+        visible = re.sub(r'<script[^>]*>.*?</script>', ' ', html, flags=re.I | re.S)
+        visible = re.sub(r'<style[^>]*>.*?</style>', ' ', visible, flags=re.I | re.S)
+        visible = re.sub(r'<[^>]+>', ' ', visible)
+        visible_lower = visible.lower()
         for phrase in sold_out_phrases:
-            if phrase in text_lower:
+            if phrase in visible_lower:
                 result["sold_out"] = True
                 break
 
