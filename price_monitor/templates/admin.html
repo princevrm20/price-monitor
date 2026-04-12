@@ -167,6 +167,7 @@ details .inner{margin-top:.85rem;}
       <td>
         <div class="actions">
           <button class="btn bp" onclick="checkMon('{{ m.id }}',this)" style="font-size:.7rem">Check Price</button>
+          <button class="btn {{ 'bo' if not m.get('notify_enabled', true) else 'bp' }}" id="bell-{{ m.id }}" onclick="toggleNotify('{{ m.id }}',this)" title="{{ 'Notifications ON – click to disable' if m.get('notify_enabled', true) else 'Notifications OFF – click to enable' }}" style="font-size:.85rem;padding:.3rem .5rem">{{ '🔔' if m.get('notify_enabled', true) else '🔕' }}</button>
           {% if m.status == 'active' %}
             <button class="btn bw" onclick="pauseMon('{{ m.id }}')">Pause</button>
           {% elif m.status == 'paused' or m.status == 'expired' %}
@@ -383,6 +384,7 @@ details .inner{margin-top:.85rem;}
     <div class="fg" id="fg-drop-pct" style="display:none"><label>Drop % threshold</label><input type="number" id="c-drop-pct" value="10" min="1" max="99"></div>
   </div>
   <div class="fg"><label>Comparison Group <span style="color:var(--muted)">(optional)</span></label><input type="text" id="c-comp-group" placeholder="e.g. iphone-15"></div>
+  <div class="fg"><label style="display:flex;align-items:center;gap:.5rem;cursor:pointer"><input type="checkbox" id="c-notify" checked style="width:auto;accent-color:var(--primary)"> Send notifications when price drops</label></div>
 
   <div id="fields-product">
     <div class="fg"><label>URL <span class="req">*</span></label><input type="url" id="c-url"></div>
@@ -457,14 +459,14 @@ function toggleTheme(){const h=document.documentElement;const d=h.getAttribute('
 function toggleAlertFields(){$('fg-drop-pct').style.display=$('c-alert-mode').value==='drop_percent'?'':'none';}
 
 /* Modal */
-function openCreate(type){$('c-type').value=type;toggleFields();$('c-name').value='';$('c-created-by').value=_username;$('c-tags').value='';$('c-category').value='';$('c-interval').value='60';$('c-alert-mode').value='budget';$('c-drop-pct').value='10';$('c-comp-group').value='';toggleAlertFields();$('c-url').value='';$('c-budget').value='';$('c-until').value='';$('c-forigin').value='';$('c-fdest').value='';$('c-fdate').value='';$('c-frdate').value='';$('c-fmaxprice').value='';$('c-fairline').value='';$('modal-title').textContent='New '+type.charAt(0).toUpperCase()+type.slice(1)+' Monitor';$('modal-create').classList.add('show');}
+function openCreate(type){$('c-type').value=type;toggleFields();$('c-name').value='';$('c-created-by').value=_username;$('c-tags').value='';$('c-category').value='';$('c-interval').value='60';$('c-alert-mode').value='budget';$('c-drop-pct').value='10';$('c-comp-group').value='';toggleAlertFields();$('c-notify').checked=true;$('c-url').value='';$('c-budget').value='';$('c-until').value='';$('c-forigin').value='';$('c-fdest').value='';$('c-fdate').value='';$('c-frdate').value='';$('c-fmaxprice').value='';$('c-fairline').value='';$('modal-title').textContent='New '+type.charAt(0).toUpperCase()+type.slice(1)+' Monitor';$('modal-create').classList.add('show');}
 function closeModal(){$('modal-create').classList.remove('show');}
 function toggleFields(){const t=$('c-type').value;$('fields-product').style.display=t==='product'?'':'none';$('fields-flight').style.display=t==='flight'?'':'none';}
 
 async function submitCreate(){
   const t=$('c-type').value;
   const createdBy=$('c-created-by').value.trim()||_username;
-  const base={type:t,name:$('c-name').value,created_by:createdBy,tags:$('c-tags').value,category:$('c-category').value,check_interval_min:parseInt($('c-interval').value)||60,alert_mode:$('c-alert-mode').value,alert_drop_percent:$('c-drop-pct').value||null,comparison_group:$('c-comp-group').value};
+  const base={type:t,name:$('c-name').value,created_by:createdBy,tags:$('c-tags').value,category:$('c-category').value,check_interval_min:parseInt($('c-interval').value)||60,alert_mode:$('c-alert-mode').value,alert_drop_percent:$('c-drop-pct').value||null,comparison_group:$('c-comp-group').value,notify_enabled:$('c-notify').checked};
   let d;
   if(t==='product') d={...base,url:$('c-url').value,budget:$('c-budget').value,monitor_until:$('c-until').value};
   else d={...base,flight_origin:$('c-forigin').value,flight_destination:$('c-fdest').value,flight_date:$('c-fdate').value,flight_return_date:$('c-frdate').value,flight_max_price:$('c-fmaxprice').value,flight_airline_pref:$('c-fairline').value};
@@ -539,8 +541,10 @@ function showCheckResult(m){
   html+='Status: <span class="badge b-'+m.status+'">'+m.status+'</span>';
   if(m.alert_mode)html+=' &nbsp;·&nbsp; Alert mode: '+m.alert_mode;
   html+='</div>';
-  if(m.notified_budget){
-    html+='<div style="font-size:.78rem;color:var(--warn);margin-top:.4rem">⚠ Alert already sent for this price drop. A new alert will be sent if the price rises above your budget and drops below it again.</div>';
+  if(m.notify_enabled===false){
+    html+='<div style="font-size:.78rem;color:var(--warn);margin-top:.4rem">🔕 Notifications are turned off for this monitor. Enable them from the dashboard to receive price alerts.</div>';
+  }else{
+    html+='<div style="font-size:.78rem;color:var(--muted);margin-top:.4rem">🔔 Notifications are on. You will be alerted each time the price changes while below your budget.</div>';
   }
   html+='</div>';
   $('cr-body').innerHTML=html;
@@ -549,6 +553,21 @@ function showCheckResult(m){
 async function pauseMon(id){if(!confirm('Pause this monitor? It will stop checking prices until you resume it.'))return;await fetch('/api/monitors/'+id+'/pause',{method:'POST'});toast('Paused');location.reload();}
 async function resumeMon(id){if(!confirm('Resume this monitor? It will start checking prices again.'))return;await fetch('/api/monitors/'+id+'/resume',{method:'POST'});toast('Resumed');location.reload();}
 async function delMon(id,name){if(!confirm('Delete monitor "'+name+'"? This cannot be undone.'))return;await fetch('/api/monitors/'+id,{method:'DELETE'});toast('Deleted');location.reload();}
+async function toggleNotify(id,btn){
+  btn.disabled=true;
+  try{
+    const r=await fetch('/api/monitors/'+id+'/toggle-notify',{method:'POST'});
+    const j=await r.json();
+    if(j.ok){
+      const on=j.notify_enabled;
+      btn.textContent=on?'🔔':'🔕';
+      btn.className='btn '+(on?'bp':'bo');
+      btn.title=on?'Notifications ON – click to disable':'Notifications OFF – click to enable';
+      toast(on?'Notifications enabled':'Notifications disabled');
+    }else{toast(j.error||'Failed',false);}
+  }catch(e){toast('Network error',false);}
+  btn.disabled=false;
+}
 
 /* Notifications */
 function ndata(){const d={desktop:false,ntfy_topic:$('n-ntfy-topic').value,ntfy_server:$('n-ntfy-server').value||'https://ntfy.sh',smtp_to:$('n-smtp-to').value};if($('n-smtp-host')){d.smtp_host=$('n-smtp-host').value;d.smtp_port=parseInt($('n-smtp-port').value)||587;d.smtp_user=$('n-smtp-user').value;d.smtp_pass=$('n-smtp-pass').value;d.smtp_from=$('n-smtp-from').value;}return d;}

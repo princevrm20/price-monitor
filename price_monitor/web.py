@@ -364,6 +364,7 @@ def api_create_monitor():
         "alert_mode": data.get("alert_mode", "budget"),
         "alert_drop_percent": _safe_float(data.get("alert_drop_percent")),
         "comparison_group": (data.get("comparison_group") or "").strip(),
+        "notify_enabled": data.get("notify_enabled", True) is not False,
     }
 
     if mtype == "product":
@@ -447,12 +448,15 @@ def api_update_monitor(monitor_id):
         "price_selector", "monitor_until", "alert_mode", "alert_drop_percent",
         "comparison_group", "flight_origin", "flight_destination", "flight_date",
         "flight_return_date", "flight_max_price", "flight_airline_pref",
+        "notify_enabled",
     }
     if session.get("role") == "admin":
         safe_keys.add("created_by")
     updates = {k: v for k, v in data.items() if k in safe_keys}
     if "tags" in updates:
         updates["tags"] = _parse_tags(updates["tags"])
+    if "notify_enabled" in updates:
+        updates["notify_enabled"] = updates["notify_enabled"] is not False and updates["notify_enabled"] != "false"
     updated = update_monitor(monitor_id, updates)
     if not updated:
         return jsonify(ok=False, error="Not found"), 404
@@ -511,6 +515,24 @@ def api_resume_monitor(monitor_id):
     add_audit("resume", "monitor", monitor_id, updated.get("name", ""), session.get("username", "system"))
     _add_log(f"Monitor resumed: {updated.get('name', monitor_id)}")
     return jsonify(ok=True, monitor=updated)
+
+
+@app.route("/api/monitors/<monitor_id>/toggle-notify", methods=["POST"])
+@require_auth
+def api_toggle_notify(monitor_id):
+    mon = get_monitor(monitor_id)
+    if not mon:
+        return jsonify(ok=False, error="Not found"), 404
+    if not _can_access_monitor(mon):
+        return jsonify(ok=False, error="Access denied"), 403
+    new_val = not mon.get("notify_enabled", True)
+    updated = update_monitor(monitor_id, {"notify_enabled": new_val})
+    if not updated:
+        return jsonify(ok=False, error="Not found"), 404
+    add_audit("update", "monitor", monitor_id, updated.get("name", ""), session.get("username", "system"),
+              {"notify_enabled": new_val})
+    _add_log(f"Monitor notifications {'enabled' if new_val else 'disabled'}: {updated.get('name', monitor_id)}")
+    return jsonify(ok=True, monitor=updated, notify_enabled=new_val)
 
 
 @app.route("/api/monitors/<monitor_id>/duplicate", methods=["POST"])
@@ -639,15 +661,20 @@ def api_import_monitors():
 # ═══════════════════════════════════════════════════════════════════════
 
 def _should_alert(mon: dict, current_value: float | None, value_key: str, budget_key: str) -> bool:
-    """Determine if an alert should fire based on alert_mode."""
+    """Determine if an alert should fire based on alert_mode and notify_enabled."""
     if current_value is None:
+        return False
+    if mon.get("notify_enabled") is False:
         return False
 
     mode = mon.get("alert_mode", "budget")
+    last_key = f"last_{value_key}"
+    last_val = mon.get(last_key)
+    price_changed = last_val is None or current_value != last_val
 
     if mode == "budget":
         budget = mon.get(budget_key)
-        if budget is not None and current_value <= budget and not mon.get("notified_budget"):
+        if budget is not None and current_value <= budget and price_changed:
             return True
 
     elif mode == "drop_percent":
@@ -656,13 +683,11 @@ def _should_alert(mon: dict, current_value: float | None, value_key: str, budget
         drop_pct = mon.get("alert_drop_percent") or 10
         if peak and peak > 0:
             actual_drop = ((peak - current_value) / peak) * 100
-            if actual_drop >= drop_pct and not mon.get("notified_budget"):
+            if actual_drop >= drop_pct and price_changed:
                 return True
 
     elif mode == "any_change":
-        last_key = f"last_{value_key}"
-        last_val = mon.get(last_key)
-        if last_val is not None and current_value != last_val:
+        if price_changed:
             return True
 
     return False
@@ -705,10 +730,7 @@ def _do_check_product(mon: dict) -> tuple[dict, dict]:
             old = mon.get("last_price")
             direction = "dropped" if old and price < old else "changed"
             _send_alert(mon, f"Price {direction}: {mon['name']}", f"Now {price:g} (was {old:g if old else '?'}).\n{mon['url']}")
-        updates["notified_budget"] = True
         details["alerted"] = True
-    elif price is not None and mon.get("budget") is not None and price > mon.get("budget", 0):
-        updates["notified_budget"] = False
 
     return updates, details
 
@@ -753,10 +775,7 @@ def _do_check_flight(mon: dict) -> tuple[dict, dict]:
             _send_alert(mon, f"Flight price drop: {mon['name']}", f"Dropped {drop:.1f}% to {price:g}.")
         elif mode == "any_change":
             _send_alert(mon, f"Flight price changed: {mon['name']}", f"Now {price:g}.")
-        updates["notified_budget"] = True
         details["alerted"] = True
-    elif price and max_p and price > max_p:
-        updates["notified_budget"] = False
 
     return updates, details
 
@@ -765,6 +784,8 @@ def _send_alert(mon: dict, title: str, message: str) -> None:
     from price_monitor.notify_settings import load_notify_settings
     from price_monitor.notifier import notify_price_alert
     from price_monitor.db import _json_path
+
+    message += "\n\nTo stop notifications for this product, turn off alerts on your dashboard."
 
     _logger.info("ALERT       | %s | %s", mon.get("name", "?"), title)
     try:

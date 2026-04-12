@@ -93,6 +93,7 @@ def create_monitor(mon: dict) -> dict:
     mon.setdefault("last_error_at", None)
     mon.setdefault("last_error_msg", None)
     mon.setdefault("comparison_group", "")
+    mon.setdefault("notify_enabled", True)
 
     sb = _get_supabase()
     if sb:
