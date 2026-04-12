@@ -713,14 +713,15 @@ def _update_peak(mon: dict, current_value: float | None, peak_key: str) -> dict:
 def _do_check_product(mon: dict) -> tuple[dict, dict]:
     from price_monitor.monitor import fetch_html
     from price_monitor.parser_price import (
-        detect_sold_out, extract_price, extract_product_name, names_match,
+        extract_price, extract_product_info, names_match,
     )
 
     html = fetch_html(mon["url"])
     _logger.debug("FETCH       | %s | got %d bytes from %s", mon.get("name", "?"), len(html), mon["url"][:80])
 
-    detected_name = extract_product_name(html, mon["url"])
-    is_sold_out = detect_sold_out(html, mon["url"])
+    info = extract_product_info(html, mon["url"])
+    detected_name = info.get("name")
+    is_sold_out = info.get("sold_out", False)
     price = extract_price(html, mon.get("price_selector"), mon["url"])
 
     if price is None:

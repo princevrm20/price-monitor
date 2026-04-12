@@ -375,49 +375,80 @@ def _generic_price_selectors() -> list[str]:
     ]
 
 
-def extract_product_name(html: str, product_url: str | None = None) -> str | None:
-    """Extract the product name/title from HTML using structured data, meta tags, and selectors."""
-    soup = _make_soup(html)
+def extract_product_info(html: str, product_url: str | None = None) -> dict:
+    """Extract product name and sold-out status in a single pass.
 
-    # 1. JSON-LD Product name
-    for script in soup.find_all("script", type="application/ld+json"):
-        raw = script.string or script.get_text() or ""
-        raw = raw.strip()
+    Returns dict with keys: 'name' (str|None), 'sold_out' (bool).
+    """
+    result: dict = {"name": None, "sold_out": False}
+
+    # Use regex on raw HTML first (cheap, no soup needed)
+    # Check meta and JSON-LD via regex before full parse
+    lower = html.lower()
+
+    # Quick sold-out check via meta tag
+    avail_m = re.search(r'<meta\s+[^>]*property="product:availability"[^>]*content="([^"]*)"', html, re.I)
+    if avail_m and avail_m.group(1).lower().replace(" ", "") in ("oos", "outofstock", "soldout"):
+        result["sold_out"] = True
+
+    # Extract name from og:title (cheap regex)
+    og_m = re.search(r'<meta\s+[^>]*(?:property|name)="og:title"[^>]*content="([^"]*)"', html, re.I)
+    if og_m and len(og_m.group(1).strip()) > 2:
+        result["name"] = og_m.group(1).strip()
+
+    # Extract name from <title> tag
+    if not result["name"]:
+        title_m = re.search(r'<title>([^<]{3,200})</title>', html, re.I)
+        if title_m:
+            raw_title = title_m.group(1).strip()
+            for sep in [" - ", " | ", " – ", " — "]:
+                if sep in raw_title:
+                    raw_title = raw_title.split(sep)[0].strip()
+                    break
+            if len(raw_title) > 2:
+                result["name"] = raw_title
+
+    # Extract name from JSON-LD (regex, avoid full parse)
+    for m in re.finditer(r'<script[^>]*type="application/ld\+json"[^>]*>(.*?)</script>', html, re.I | re.S):
+        raw = m.group(1).strip()
         if not raw:
             continue
         try:
             data = json.loads(raw)
         except json.JSONDecodeError:
             continue
-        name = _walk_ld_for_name(data)
-        if name:
-            return name.strip()
+        ld_name = _walk_ld_for_name(data)
+        if ld_name:
+            result["name"] = ld_name.strip()
+        if _ld_has_out_of_stock(data):
+            result["sold_out"] = True
 
-    # 2. Myntra pdpData in inline scripts
+    # Myntra-specific: pdpData name (regex)
     if _is_myntra_url(product_url):
-        for script in soup.find_all("script"):
-            text = script.string or ""
-            m = re.search(r'"name"\s*:\s*"([^"]{3,120})"', text)
-            if m and "pdpData" in text[:500]:
-                return m.group(1).strip()
+        pdp_m = re.search(r'pdpData.*?"name"\s*:\s*"([^"]{3,120})"', html[:100000], re.S)
+        if pdp_m:
+            result["name"] = pdp_m.group(1).strip()
 
-    # 3. og:title / twitter:title meta
-    og = _meta_content(soup, "og:title") or _meta_content(soup, "twitter:title")
-    if og and len(og.strip()) > 2:
-        return og.strip()
-
-    # 4. <title> tag
-    title_tag = soup.find("title")
-    if title_tag:
-        raw_title = title_tag.get_text(strip=True)
-        for sep in [" - ", " | ", " – ", " — "]:
-            if sep in raw_title:
-                raw_title = raw_title.split(sep)[0].strip()
+    # Sold-out check: search visible-ish text (heuristic: avoid <script> blocks)
+    if not result["sold_out"]:
+        sold_out_phrases = [
+            "currently sold out",
+            "currently unavailable",
+            "this product is currently sold out",
+            "this item is no longer available",
+            "item is currently out of stock",
+            "sold out online",
+            "product is out of stock",
+        ]
+        text_chunks = re.sub(r'<script[^>]*>.*?</script>', ' ', html, flags=re.I | re.S)
+        text_chunks = re.sub(r'<style[^>]*>.*?</style>', ' ', text_chunks, flags=re.I | re.S)
+        text_lower = text_chunks.lower()
+        for phrase in sold_out_phrases:
+            if phrase in text_lower:
+                result["sold_out"] = True
                 break
-        if len(raw_title) > 2:
-            return raw_title
 
-    return None
+    return result
 
 
 def _walk_ld_for_name(obj: Any) -> str | None:
@@ -438,52 +469,6 @@ def _walk_ld_for_name(obj: Any) -> str | None:
             if n:
                 return n
     return None
-
-
-def detect_sold_out(html: str, product_url: str | None = None) -> bool:
-    """Detect if a product page indicates the item is sold out / unavailable."""
-    soup = _make_soup(html)
-
-    # 1. Check visible page text (body only, not scripts) for sold-out phrases
-    body = soup.body
-    if body:
-        for script_tag in body.find_all(["script", "style"]):
-            script_tag.decompose()
-        visible_text = body.get_text(" ", strip=True).lower()
-
-        sold_out_phrases = [
-            "currently sold out",
-            "currently unavailable",
-            "this product is currently sold out",
-            "this item is no longer available",
-            "item is currently out of stock",
-            "sold out online",
-            "product is out of stock",
-            "out of stock",
-        ]
-        for phrase in sold_out_phrases:
-            if phrase in visible_text:
-                return True
-
-    # Re-parse since we modified the soup above
-    soup2 = _make_soup(html)
-
-    # 2. Meta tag availability
-    availability_meta = _meta_content(soup2, "product:availability") or ""
-    if availability_meta.lower() in ("oos", "out of stock", "outofstock"):
-        return True
-
-    # 3. JSON-LD structured data availability
-    for script in soup2.find_all("script", type="application/ld+json"):
-        raw = script.string or script.get_text() or ""
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError:
-            continue
-        if _ld_has_out_of_stock(data):
-            return True
-
-    return False
 
 
 def _ld_has_out_of_stock(obj: Any) -> bool:
