@@ -858,32 +858,6 @@ def api_check_monitor(monitor_id):
         return jsonify(ok=False, error=str(e)), 500
 
 
-@app.route("/api/debug-fetch", methods=["POST"])
-@require_admin
-def api_debug_fetch():
-    """Temporary debug: fetch a URL and return info about what we get."""
-    from price_monitor.monitor import fetch_html
-    from price_monitor.parser_price import extract_price
-    import re
-    data = request.get_json(force=True)
-    url = data.get("url", "")
-    try:
-        html = fetch_html(url)
-        price = extract_price(html, None, url)
-        title_tag = ""
-        tm = re.search(r"<title[^>]*>(.*?)</title>", html, re.IGNORECASE | re.DOTALL)
-        if tm:
-            title_tag = tm.group(1).strip()[:200]
-        price_matches = re.findall(r'"(?:discountedPrice|price)"[:\s]*[\d{][^,}]{0,80}', html)[:5]
-        has_captcha = "captcha" in html.lower() or "robot" in html.lower()
-        return jsonify(ok=True, html_length=len(html), price=price,
-                       title=title_tag, price_matches=price_matches,
-                       has_captcha=has_captcha,
-                       first_500=html[:500], last_500=html[-500:])
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
-
-
 # ═══════════════════════════════════════════════════════════════════════
 # EVENTS API
 # ═══════════════════════════════════════════════════════════════════════

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import gzip
 import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from urllib.parse import quote, unquote, urlparse
 from urllib.request import url2pathname
 
 import httpx
@@ -71,6 +72,47 @@ def _read_html_from_file_url(url: str) -> str | None:
     return p.read_text(encoding="utf-8", errors="replace")
 
 
+_PROXY_BLOCKED_DOMAINS = {"myntra.com"}
+
+PROXY_URL_TEMPLATE = os.environ.get(
+    "PRICE_MONITOR_PROXY_URL",
+    "https://corsproxy.io/?{encoded_url}",
+)
+
+
+def _needs_proxy(url: str) -> bool:
+    """Check if a URL's domain is known to block cloud server IPs."""
+    try:
+        host = urlparse(url).hostname or ""
+        return any(d in host for d in _PROXY_BLOCKED_DOMAINS)
+    except Exception:
+        return False
+
+
+def _fetch_via_proxy(url: str, timeout: httpx.Timeout, verify: bool | str) -> str:
+    """Fetch through a CORS proxy, handling gzip-encoded responses."""
+    encoded = quote(url, safe="")
+    proxy_url = PROXY_URL_TEMPLATE.format(encoded_url=encoded)
+    headers = {k: v for k, v in DEFAULT_HEADERS.items() if k.lower() != "accept-encoding"}
+    headers["Accept-Encoding"] = "identity"
+    with httpx.Client(
+        headers=headers,
+        follow_redirects=True,
+        timeout=timeout,
+        verify=verify,
+    ) as client:
+        r = client.get(proxy_url)
+        r.raise_for_status()
+        raw = r.content
+        # Proxy may return raw gzip despite asking for identity
+        if raw[:2] == b"\x1f\x8b":
+            raw = gzip.decompress(raw)
+        try:
+            return raw.decode("utf-8", errors="replace")
+        except Exception:
+            return raw.decode("latin-1", errors="replace")
+
+
 def _fetch_html_once(url: str, timeout: httpx.Timeout, verify: bool | str) -> str:
     with httpx.Client(
         headers=DEFAULT_HEADERS,
@@ -83,6 +125,13 @@ def _fetch_html_once(url: str, timeout: httpx.Timeout, verify: bool | str) -> st
         return r.text
 
 
+def _is_blocked_response(html: str) -> bool:
+    """Detect if a response is a block/maintenance page."""
+    if len(html) < 1000 and ("site maintenance" in html.lower() or "something went wrong" in html.lower()):
+        return True
+    return False
+
+
 def fetch_html(url: str, timeout: httpx.Timeout | float | None = None) -> str:
     url = shorten_amazon_product_url(url.strip())
     file_html = _read_html_from_file_url(url)
@@ -90,23 +139,45 @@ def fetch_html(url: str, timeout: httpx.Timeout | float | None = None) -> str:
         return file_html
     t = timeout if timeout is not None else httpx.Timeout(40.0, connect=12.0)
     verify = _resolve_tls_verify()
+
+    use_proxy = _needs_proxy(url)
+    if use_proxy:
+        try:
+            html = _fetch_via_proxy(url, t, verify if verify is not False else False)
+            if not _is_blocked_response(html):
+                return html
+        except Exception as e:
+            print(f"[price_monitor] Proxy fetch failed for {url[:80]}: {e}", file=sys.stderr)
+
     if verify is False:
-        return _fetch_html_once(url, t, False)
-    try:
-        return _fetch_html_once(url, t, verify)
-    except Exception as e:
-        allow = (os.environ.get("PRICE_MONITOR_SSL_INSECURE_RETRY") or "1").strip().lower() not in (
-            "0",
-            "false",
-            "no",
-        )
-        if allow and _tls_retryable(e):
-            print(
-                "[price_monitor] TLS verification failed; retrying once without verifying the certificate.",
-                file=sys.stderr,
+        html = _fetch_html_once(url, t, False)
+    else:
+        try:
+            html = _fetch_html_once(url, t, verify)
+        except Exception as e:
+            allow = (os.environ.get("PRICE_MONITOR_SSL_INSECURE_RETRY") or "1").strip().lower() not in (
+                "0",
+                "false",
+                "no",
             )
-            return _fetch_html_once(url, t, False)
-        raise
+            if allow and _tls_retryable(e):
+                print(
+                    "[price_monitor] TLS verification failed; retrying once without verifying the certificate.",
+                    file=sys.stderr,
+                )
+                html = _fetch_html_once(url, t, False)
+            else:
+                raise
+
+    if _is_blocked_response(html) and not use_proxy:
+        try:
+            proxy_html = _fetch_via_proxy(url, t, verify if verify is not False else False)
+            if not _is_blocked_response(proxy_html):
+                return proxy_html
+        except Exception:
+            pass
+
+    return html
 
 
 def check_item(item: TrackedItem, settings: NotifySettings) -> TrackedItem:
