@@ -594,13 +594,39 @@ def extract_original_price(html: str, product_url: str | None = None) -> float |
     """Extract the MRP / original / strikethrough price from a product page."""
     soup = _make_soup(html)
 
-    # Amazon: strikethrough price
+    # Amazon: strikethrough / MRP price
     if _is_amazon_url(product_url):
         for sel in [".a-text-strike", ".basisPrice .a-offscreen",
-                    ".a-price[data-a-strike=true] .a-offscreen"]:
+                    ".a-price[data-a-strike=true] .a-offscreen",
+                    "[data-a-strike=true] .a-offscreen"]:
             node = soup.select_one(sel)
             if node:
-                p = _parse_number_token(node.get_text(strip=True))
+                text = node.get_text(strip=True)
+                p = _extract_currency_price(text) or _parse_number_token(text)
+                if p is not None and p > 0:
+                    return p
+        # Regex fallback on HTML-unescaped text
+        import html as html_mod
+        unescaped = html_mod.unescape(html[:200000])
+        for pat in [
+            r'M\.?\s*R\.?\s*P\.?\s*[:.]?\s*[₹]\s*([\d,]+(?:\.\d+)?)',
+            r'"listPrice"\s*:\s*"?[₹]?\s*([\d,]+(?:\.\d+)?)',
+            r'"strikeThroughPrice"\s*:\s*"?[₹]?\s*([\d,]+(?:\.\d+)?)',
+        ]:
+            m = re.search(pat, unescaped)
+            if m:
+                p = _parse_number_token(m.group(1))
+                if p is not None and p > 0:
+                    return p
+
+    # Flipkart: strikethrough price
+    if _is_flipkart_url(product_url):
+        for sel in ["div._30jeq3._1_WHN1 + div._3I9_wc",
+                     "div._25b18c div._3I9_wc"]:
+            node = soup.select_one(sel)
+            if node:
+                text = node.get_text(strip=True)
+                p = _extract_currency_price(text) or _parse_number_token(text)
                 if p is not None and p > 0:
                     return p
 
@@ -616,6 +642,14 @@ def extract_original_price(html: str, product_url: str | None = None) -> float |
         val = float(m.group(1))
         if val > 0:
             return val / 100 if val > 10000 else val
+
+    # Generic: <del> or <s> tags wrapping prices (strikethrough)
+    for tag in soup.select("del, s"):
+        text = tag.get_text(strip=True)
+        if text and any(c.isdigit() for c in text):
+            p = _extract_currency_price(text) or _parse_number_token(text)
+            if p is not None and p > 0:
+                return p
 
     # JSON-LD: highPrice
     for script in soup.find_all("script", type="application/ld+json"):
