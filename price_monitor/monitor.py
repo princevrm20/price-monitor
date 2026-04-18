@@ -129,6 +129,8 @@ def _is_blocked_response(html: str) -> bool:
     """Detect if a response is a block/maintenance page."""
     if len(html) < 1000 and ("site maintenance" in html.lower() or "something went wrong" in html.lower()):
         return True
+    if len(html) < 15000 and "validateCaptcha" in html:
+        return True
     return False
 
 
