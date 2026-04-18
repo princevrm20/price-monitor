@@ -588,3 +588,49 @@ def extract_price(html: str, price_selector: str | None, product_url: str | None
             return cp
 
     return None
+
+
+def extract_original_price(html: str, product_url: str | None = None) -> float | None:
+    """Extract the MRP / original / strikethrough price from a product page."""
+    soup = _make_soup(html)
+
+    # Amazon: strikethrough price
+    if _is_amazon_url(product_url):
+        for sel in [".a-text-strike", ".basisPrice .a-offscreen",
+                    ".a-price[data-a-strike=true] .a-offscreen"]:
+            node = soup.select_one(sel)
+            if node:
+                p = _parse_number_token(node.get_text(strip=True))
+                if p is not None and p > 0:
+                    return p
+
+    # Myntra: "mrp" in pdpData JSON
+    if _is_myntra_url(product_url):
+        m = re.search(r'"mrp"\s*:\s*(\d+(?:\.\d+)?)', html)
+        if m:
+            return float(m.group(1))
+
+    # Shopify: compare_at_price (stored in paise/cents)
+    m = re.search(r'"compare_at_price"\s*:\s*"?(\d+(?:\.\d+)?)"?', html)
+    if m:
+        val = float(m.group(1))
+        if val > 0:
+            return val / 100 if val > 10000 else val
+
+    # JSON-LD: highPrice
+    for script in soup.find_all("script", type="application/ld+json"):
+        try:
+            data = json.loads(script.string or "")
+            items = [data] if isinstance(data, dict) else (data if isinstance(data, list) else [])
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                offers = item.get("offers")
+                if isinstance(offers, dict) and "highPrice" in offers:
+                    p = _parse_number_token(str(offers["highPrice"]))
+                    if p is not None and p > 0:
+                        return p
+        except (json.JSONDecodeError, TypeError, ValueError):
+            pass
+
+    return None

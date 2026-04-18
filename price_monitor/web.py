@@ -696,10 +696,12 @@ def _should_alert(mon: dict, current_value: float | None, value_key: str, budget
 
     drop_pct = mon.get("alert_drop_percent")
     if drop_pct:
-        peak_key = "highest_price" if value_key == "price" else ("highest_fare" if value_key == "fare" else "highest_price")
-        peak = mon.get(peak_key)
-        if peak and peak > 0:
-            actual_drop = ((peak - current_value) / peak) * 100
+        ref_price = mon.get("original_price")
+        if not ref_price or ref_price <= 0:
+            peak_key = "highest_price" if value_key == "price" else ("highest_fare" if value_key == "fare" else "highest_price")
+            ref_price = mon.get(peak_key)
+        if ref_price and ref_price > 0:
+            actual_drop = ((ref_price - current_value) / ref_price) * 100
             if actual_drop >= drop_pct:
                 reasons["drop_percent"] = actual_drop
 
@@ -722,7 +724,7 @@ def _update_peak(mon: dict, current_value: float | None, peak_key: str) -> dict:
 def _do_check_product(mon: dict) -> tuple[dict, dict]:
     from price_monitor.monitor import fetch_html
     from price_monitor.parser_price import (
-        extract_price, extract_product_info, names_match,
+        extract_price, extract_original_price, extract_product_info, names_match,
     )
 
     html = fetch_html(mon["url"])
@@ -732,6 +734,7 @@ def _do_check_product(mon: dict) -> tuple[dict, dict]:
     detected_name = info.get("name")
     is_sold_out = info.get("sold_out", False)
     price = extract_price(html, mon.get("price_selector"), mon["url"])
+    original_price = extract_original_price(html, mon["url"])
 
     if price is None:
         _logger.warning("NO PRICE    | %s | could not extract price from %s (html=%d bytes, selector=%s)",
@@ -807,6 +810,8 @@ def _do_check_product(mon: dict) -> tuple[dict, dict]:
         add_event(mon["id"], "back_in_stock", {"price": price, "detected_name": detected_name})
 
     updates["last_price"] = price
+    if original_price is not None:
+        updates["original_price"] = original_price
     updates.update(_update_peak(mon, price, "highest_price"))
 
     reasons = _should_alert(mon, price, "price", "budget")
@@ -815,8 +820,8 @@ def _do_check_product(mon: dict) -> tuple[dict, dict]:
         if "budget" in reasons:
             parts.append(f"Below budget! Now {price:g} (budget {mon['budget']:g})")
         if "drop_percent" in reasons:
-            peak = mon.get("highest_price") or price
-            parts.append(f"Dropped {reasons['drop_percent']:.1f}% from peak {peak:g}")
+            ref = mon.get("original_price") or mon.get("highest_price") or price
+            parts.append(f"Dropped {reasons['drop_percent']:.1f}% from MRP {ref:g}")
         if "any_change" in reasons:
             old = mon.get("last_price")
             direction = "dropped" if old and price < old else "changed"
@@ -864,8 +869,8 @@ def _do_check_flight(mon: dict) -> tuple[dict, dict]:
         if "budget" in reasons and max_p:
             parts.append(f"Below max price! Fare {price:g} (max {max_p:g})")
         if "drop_percent" in reasons:
-            peak = mon.get("highest_price") or price
-            parts.append(f"Dropped {reasons['drop_percent']:.1f}% from peak {peak:g}")
+            ref = mon.get("original_price") or mon.get("highest_price") or price
+            parts.append(f"Dropped {reasons['drop_percent']:.1f}% from {ref:g}")
         if "any_change" in reasons:
             parts.append(f"Fare changed to {price:g}")
         title = f"Flight alert: {mon['name']}"
