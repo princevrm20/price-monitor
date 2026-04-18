@@ -649,13 +649,16 @@ def extract_original_price(html: str, product_url: str | None = None) -> float |
         if val > 0:
             return val / 100 if val > 10000 else val
 
-    # Generic: <del> or <s> tags wrapping prices (strikethrough)
-    for tag in soup.select("del, s"):
-        text = tag.get_text(strip=True)
-        if text and any(c.isdigit() for c in text):
-            p = _extract_currency_price(text) or _parse_number_token(text)
-            if p is not None and p > 0:
-                return p
+    # Generic: strikethrough elements (del, s, compare-at-price custom elements)
+    for sel in ["del", "s", "hdt-compare-at-price", "[data-compare-price]",
+                ".compare-at-price", ".price--compare", ".was-price", ".original-price"]:
+        for tag in soup.select(sel):
+            text = tag.get_text(strip=True)
+            if text and any(c.isdigit() for c in text):
+                p = _extract_currency_price(text) or _parse_number_token(text)
+                if p is not None and p > 0:
+                    return p
+            break
 
     # JSON-LD: highPrice
     for script in soup.find_all("script", type="application/ld+json"):
