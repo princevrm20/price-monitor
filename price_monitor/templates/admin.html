@@ -114,7 +114,6 @@ details .inner{margin-top:.85rem;}
       {% set has_active = monitors|selectattr('status','equalto','active')|list|length > 0 %}
       <button class="btn bs" id="btn-start" onclick="startLoop()" style="{{ 'display:none' if monitoring }}" {{ 'disabled' if not has_active }}>Start Monitoring</button>
       <button class="btn bd" id="btn-stop" onclick="stopLoop()" style="{{ 'display:none' if not monitoring }}">Stop Monitoring</button>
-      <button class="btn bo" onclick="sendDigest()">Send Digest</button>
     </div>
     {% endif %}
   </div>
@@ -804,8 +803,6 @@ async function stopLoop(){
   poll();
 }
 
-/* Digest */
-async function sendDigest(){if(!confirm('Send a price digest notification now?'))return;const r=await api('/api/digest/send',{});toast(r.ok?'Digest sent':'Failed',r.ok);}
 
 /* SSE */
 function initSSE(){
