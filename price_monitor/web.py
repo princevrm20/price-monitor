@@ -735,7 +735,7 @@ def _do_check_product(mon: dict) -> tuple[dict, dict]:
     detected_name = info.get("name")
     is_sold_out = info.get("sold_out", False)
     price = extract_price(html, mon.get("price_selector"), mon["url"])
-    original_price = extract_original_price(html, mon["url"], current_price=price)
+    original_price = extract_original_price(html, mon["url"], current_price=price) or price
 
     if price is None:
         _logger.warning("NO PRICE    | %s | could not extract price from %s (html=%d bytes, selector=%s)",
