@@ -208,11 +208,12 @@ async function api(url,body){const opts=body!==undefined?{method:'POST',headers:
 (function(){const t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t);})();
 
 async function manualCheck(){const r=await api('/api/monitors/'+MID+'/check',{});toast(r.ok?'Check complete':'Failed: '+(r.error||''),r.ok);if(r.ok)setTimeout(()=>location.reload(),1000);}
-async function pauseThis(){await fetch('/api/monitors/'+MID+'/pause',{method:'POST'});location.reload();}
-async function resumeThis(){await fetch('/api/monitors/'+MID+'/resume',{method:'POST'});location.reload();}
+async function pauseThis(){if(!confirm('Pause this monitor?'))return;await fetch('/api/monitors/'+MID+'/pause',{method:'POST'});location.reload();}
+async function resumeThis(){if(!confirm('Resume this monitor?'))return;await fetch('/api/monitors/'+MID+'/resume',{method:'POST'});location.reload();}
 async function deleteThis(){if(!confirm('Delete this monitor?'))return;await fetch('/api/monitors/'+MID,{method:'DELETE'});window.location='/';}
 
 async function saveEdit(){
+  if(!confirm('Save changes to this monitor?'))return;
   const d={name:$('e-name').value,created_by:$('e-created-by').value,tags:$('e-tags').value,category:$('e-category').value,check_interval_min:parseInt($('e-interval').value)||60,alert_mode:$('e-alert-mode').value,alert_drop_percent:parseFloat($('e-drop-pct').value)||null,comparison_group:$('e-comp-group').value,notify_enabled:$('e-notify').checked};
   {% if mon.type == 'product' %}
   d.url=$('e-url').value;d.budget=parseFloat($('e-budget').value)||null;

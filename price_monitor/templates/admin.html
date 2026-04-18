@@ -86,7 +86,7 @@ details .inner{margin-top:.85rem;}
     <span class="badge {{ 'b-active' if monitoring else 'b-paused' }}" id="badge-mon">{{ 'Monitoring' if monitoring else 'Idle' }}</span>
     {% endif %}
     <button onclick="toggleTheme()">Theme</button>
-    <a href="/logout">Logout</a>
+    <a href="/logout" onclick="return confirm('Are you sure you want to logout?')">Logout</a>
   </div>
 </header>
 
@@ -592,6 +592,7 @@ async function submitCreate(){
 
 async function submitEdit(){
   if(!_editMonId)return;
+  if(!confirm('Save changes to this monitor?'))return;
   const t=$('c-type').value;
   const d={name:$('c-name').value,created_by:$('c-created-by').value.trim(),tags:$('c-tags').value,category:$('c-category').value,check_interval_min:parseInt($('c-interval').value)||60,alert_mode:$('c-alert-mode').value,alert_drop_percent:parseFloat($('c-drop-pct').value)||null,comparison_group:$('c-comp-group').value,notify_enabled:$('c-notify').checked};
   if(t==='product'){
@@ -710,6 +711,8 @@ async function pauseMon(id){if(!confirm('Pause this monitor? It will stop checki
 async function resumeMon(id){if(!confirm('Resume this monitor? It will start checking prices again.'))return;await fetch('/api/monitors/'+id+'/resume',{method:'POST'});toast('Resumed');location.reload();}
 async function delMon(id,name){if(!confirm('Delete monitor "'+name+'"? This cannot be undone.'))return;await fetch('/api/monitors/'+id,{method:'DELETE'});toast('Deleted');location.reload();}
 async function toggleNotify(id,btn){
+  const turning=btn.textContent.trim()==='🔔'?'OFF':'ON';
+  if(!confirm('Turn notifications '+turning+' for this monitor?'))return;
   btn.disabled=true;
   try{
     const r=await fetch('/api/monitors/'+id+'/toggle-notify',{method:'POST'});
@@ -727,7 +730,7 @@ async function toggleNotify(id,btn){
 
 /* Notifications */
 function ndata(){const d={desktop:false,ntfy_topic:$('n-ntfy-topic').value,ntfy_server:$('n-ntfy-server').value||'https://ntfy.sh',smtp_to:$('n-smtp-to').value};if($('n-smtp-host')){d.smtp_host=$('n-smtp-host').value;d.smtp_port=parseInt($('n-smtp-port').value)||587;d.smtp_user=$('n-smtp-user').value;d.smtp_pass=$('n-smtp-pass').value;d.smtp_from=$('n-smtp-from').value;}return d;}
-async function saveNotify(){const r=await api('/api/notifications',ndata());toast(r.ok?'Saved':'Failed',r.ok);}
+async function saveNotify(){if(!confirm('Save notification settings?'))return;const r=await api('/api/notifications',ndata());toast(r.ok?'Saved':'Failed',r.ok);}
 async function testNotify(){const r=await api('/api/notifications/test',ndata());toast(r.ok?'Test sent!':'Test failed',r.ok);}
 async function loadNotify(){try{const r=await(await fetch('/api/notifications')).json();const s=r.settings||{};$('n-ntfy-topic').value=s.ntfy_topic||'';$('n-ntfy-server').value=s.ntfy_server||'https://ntfy.sh';$('n-smtp-to').value=s.smtp_to||'';if($('n-smtp-host')){$('n-smtp-host').value=s.smtp_host||'';$('n-smtp-port').value=s.smtp_port||587;$('n-smtp-user').value=s.smtp_user||'';$('n-smtp-pass').value=s.smtp_pass||'';$('n-smtp-from').value=s.smtp_from||'';}}catch(e){}}
 
@@ -787,6 +790,7 @@ async function importFile(input){if(!input.files.length)return;const text=await 
 
 /* Monitor loop */
 async function startLoop(){
+  if(!confirm('Start monitoring all active monitors?'))return;
   const r=await api('/api/monitor/start',{});
   if(r.ok){toast('Monitoring started');$('btn-start').style.display='none';$('btn-stop').style.display='';}
   else toast(r.error||'Failed',false);
@@ -801,7 +805,7 @@ async function stopLoop(){
 }
 
 /* Digest */
-async function sendDigest(){const r=await api('/api/digest/send',{});toast(r.ok?'Digest sent':'Failed',r.ok);}
+async function sendDigest(){if(!confirm('Send a price digest notification now?'))return;const r=await api('/api/digest/send',{});toast(r.ok?'Digest sent':'Failed',r.ok);}
 
 /* SSE */
 function initSSE(){
