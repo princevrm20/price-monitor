@@ -596,71 +596,99 @@ def extract_price(html: str, price_selector: str | None, product_url: str | None
     return None
 
 
-def extract_original_price(html: str, product_url: str | None = None) -> float | None:
-    """Extract the MRP / original / strikethrough price from a product page."""
+_MRP_CLASS_KEYWORDS = re.compile(
+    r"compare|original|was[-_]?price|old[-_]?price|regular[-_]?price|"
+    r"mrp|list[-_]?price|strike|before|retail",
+    re.I,
+)
+
+
+def _parse_price_text(text: str) -> float | None:
+    p = _extract_currency_price(text) or _parse_number_token(text)
+    return p if p is not None and p > 0 else None
+
+
+def extract_original_price(html: str, product_url: str | None = None,
+                           current_price: float | None = None) -> float | None:
+    """Extract the MRP / original / strikethrough price from a product page.
+
+    Uses a generic approach that works across sites:
+    1. Semantic HTML tags (<del>, <s>, <strike>)
+    2. Elements with strikethrough-related class/attribute names
+    3. Inline style text-decoration:line-through
+    4. Embedded JSON (Shopify compare_at_price, Myntra mrp, Amazon MRP regex)
+    5. JSON-LD structured data (highPrice)
+    """
+    import html as html_mod
     soup = _make_soup(html)
 
-    # Amazon: strikethrough / MRP price (basisPrice is the main product's MRP)
-    if _is_amazon_url(product_url):
-        for sel in [".basisPrice .a-offscreen",
-                    "#corePrice_feature_div [data-a-strike=true] .a-offscreen",
-                    ".a-text-strike"]:
-            node = soup.select_one(sel)
-            if node:
-                text = node.get_text(strip=True)
-                p = _extract_currency_price(text) or _parse_number_token(text)
-                if p is not None and p > 0:
-                    return p
-        # Regex fallback on HTML-unescaped text
-        import html as html_mod
-        unescaped = html_mod.unescape(html[:200000])
-        for pat in [
-            r'M\.?\s*R\.?\s*P\.?\s*[:.]?\s*[₹]\s*([\d,]+(?:\.\d+)?)',
-            r'"listPrice"\s*:\s*"?[₹]?\s*([\d,]+(?:\.\d+)?)',
-            r'"strikeThroughPrice"\s*:\s*"?[₹]?\s*([\d,]+(?:\.\d+)?)',
-        ]:
-            m = re.search(pat, unescaped)
-            if m:
-                p = _parse_number_token(m.group(1))
-                if p is not None and p > 0:
-                    return p
+    def _valid(p: float | None) -> float | None:
+        """MRP must be positive and >= selling price (if known)."""
+        if p is None or p <= 0:
+            return None
+        if current_price is not None and p < current_price:
+            return None
+        return p
 
-    # Flipkart: strikethrough price
-    if _is_flipkart_url(product_url):
-        for sel in ["div._30jeq3._1_WHN1 + div._3I9_wc",
-                     "div._25b18c div._3I9_wc"]:
-            node = soup.select_one(sel)
-            if node:
-                text = node.get_text(strip=True)
-                p = _extract_currency_price(text) or _parse_number_token(text)
-                if p is not None and p > 0:
+    # --- 1. Semantic strikethrough tags ---
+    for tag in soup.find_all(["del", "s", "strike"]):
+        text = tag.get_text(strip=True)
+        if text and any(c.isdigit() for c in text):
+            p = _valid(_parse_price_text(text))
+            if p is not None:
+                return p
+
+    # --- 2. Elements whose tag name or class/id contains MRP-related keywords ---
+    for el in soup.find_all(True):
+        tag_name = el.name or ""
+        classes = " ".join(el.get("class", []))
+        el_id = el.get("id", "")
+        searchable = f"{tag_name} {classes} {el_id}"
+        if _MRP_CLASS_KEYWORDS.search(searchable):
+            text = el.get_text(strip=True)
+            if text and any(c.isdigit() for c in text) and len(text) < 60:
+                p = _valid(_parse_price_text(text))
+                if p is not None:
                     return p
 
-    # Myntra: "mrp" in pdpData JSON
-    if _is_myntra_url(product_url):
-        m = re.search(r'"mrp"\s*:\s*(\d+(?:\.\d+)?)', html)
-        if m:
-            return float(m.group(1))
+    # --- 3. Inline style: text-decoration containing line-through ---
+    for el in soup.find_all(style=re.compile(r"line-through", re.I)):
+        text = el.get_text(strip=True)
+        if text and any(c.isdigit() for c in text) and len(text) < 60:
+            p = _valid(_parse_price_text(text))
+            if p is not None:
+                return p
 
+    # --- 4. Embedded JSON data ---
     # Shopify: compare_at_price (stored in paise/cents)
     m = re.search(r'"compare_at_price"\s*:\s*"?(\d+(?:\.\d+)?)"?', html)
     if m:
         val = float(m.group(1))
         if val > 0:
-            return val / 100 if val > 10000 else val
+            converted = val / 100 if val > 10000 else val
+            if _valid(converted) is not None:
+                return converted
 
-    # Generic: strikethrough elements (del, s, compare-at-price custom elements)
-    for sel in ["del", "s", "hdt-compare-at-price", "[data-compare-price]",
-                ".compare-at-price", ".price--compare", ".was-price", ".original-price"]:
-        for tag in soup.select(sel):
-            text = tag.get_text(strip=True)
-            if text and any(c.isdigit() for c in text):
-                p = _extract_currency_price(text) or _parse_number_token(text)
-                if p is not None and p > 0:
-                    return p
-            break
+    # Myntra: "mrp" in pdpData
+    m = re.search(r'"mrp"\s*:\s*(\d+(?:\.\d+)?)', html)
+    if m:
+        val = float(m.group(1))
+        if _valid(val) is not None:
+            return val
 
-    # JSON-LD: highPrice
+    # MRP / List Price regex on HTML-unescaped text
+    unescaped = html_mod.unescape(html[:200000])
+    for pat in [
+        r'M\.?\s*R\.?\s*P\.?\s*[:.]?\s*[₹$€£]\s*([\d,]+(?:\.\d+)?)',
+        r'"(?:listPrice|strikeThroughPrice)"\s*:\s*"?[₹$€£]?\s*([\d,]+(?:\.\d+)?)',
+    ]:
+        m = re.search(pat, unescaped)
+        if m:
+            p = _parse_number_token(m.group(1))
+            if _valid(p) is not None:
+                return p
+
+    # --- 5. JSON-LD structured data ---
     for script in soup.find_all("script", type="application/ld+json"):
         try:
             data = json.loads(script.string or "")
@@ -671,7 +699,7 @@ def extract_original_price(html: str, product_url: str | None = None) -> float |
                 offers = item.get("offers")
                 if isinstance(offers, dict) and "highPrice" in offers:
                     p = _parse_number_token(str(offers["highPrice"]))
-                    if p is not None and p > 0:
+                    if _valid(p) is not None:
                         return p
         except (json.JSONDecodeError, TypeError, ValueError):
             pass
