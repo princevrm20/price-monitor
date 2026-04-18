@@ -596,7 +596,7 @@ def extract_price(html: str, price_selector: str | None, product_url: str | None
     return None
 
 
-_MRP_CLASS_KEYWORDS = re.compile(
+_MRP_INDICATOR = re.compile(
     r"compare|original|was[-_]?price|old[-_]?price|regular[-_]?price|"
     r"mrp|list[-_]?price|strike|before|retail",
     re.I,
@@ -608,58 +608,72 @@ def _parse_price_text(text: str) -> float | None:
     return p if p is not None and p > 0 else None
 
 
+def _container_has_price(el, price: float, max_levels: int = 6) -> bool:
+    """Check if any ancestor (up to max_levels) contains the selling price text."""
+    price_int = str(int(price))
+    price_fmt = f"{int(price):,}"
+    node = el
+    for _ in range(max_levels):
+        node = node.parent
+        if node is None or node.name in ("body", "html", "[document]"):
+            return False
+        container_text = node.get_text(" ", strip=True)
+        if len(container_text) > 50000:
+            continue
+        if price_int in container_text or price_fmt in container_text:
+            return True
+    return False
+
+
+def _is_mrp_candidate(el) -> bool:
+    """Check if element is a likely MRP indicator by tag, class, or style."""
+    if el.name in ("del", "s", "strike"):
+        return True
+    classes = " ".join(el.get("class", []))
+    el_id = el.get("id", "")
+    if _MRP_INDICATOR.search(f"{el.name} {classes} {el_id}"):
+        return True
+    style = el.get("style", "")
+    if "line-through" in style.lower():
+        return True
+    return False
+
+
 def extract_original_price(html: str, product_url: str | None = None,
                            current_price: float | None = None) -> float | None:
     """Extract the MRP / original / strikethrough price from a product page.
 
-    Uses a generic approach that works across sites:
-    1. Semantic HTML tags (<del>, <s>, <strike>)
-    2. Elements with strikethrough-related class/attribute names
-    3. Inline style text-decoration:line-through
-    4. Embedded JSON (Shopify compare_at_price, Myntra mrp, Amazon MRP regex)
-    5. JSON-LD structured data (highPrice)
+    Strategy:
+    1. Co-occurrence: find strikethrough/MRP elements whose parent container
+       also contains the current selling price (proves same product).
+    2. Structured data: JSON-LD, Shopify JSON, MRP regex (explicit, reliable).
     """
     import html as html_mod
     soup = _make_soup(html)
 
     def _valid(p: float | None) -> float | None:
-        """MRP must be positive and >= selling price (if known)."""
         if p is None or p <= 0:
             return None
         if current_price is not None and p < current_price:
             return None
         return p
 
-    # --- 1. Semantic strikethrough tags ---
-    for tag in soup.find_all(["del", "s", "strike"]):
-        text = tag.get_text(strip=True)
-        if text and any(c.isdigit() for c in text):
-            p = _valid(_parse_price_text(text))
-            if p is not None:
-                return p
-
-    # --- 2. Elements whose tag name or class/id contains MRP-related keywords ---
-    for el in soup.find_all(True):
-        tag_name = el.name or ""
-        classes = " ".join(el.get("class", []))
-        el_id = el.get("id", "")
-        searchable = f"{tag_name} {classes} {el_id}"
-        if _MRP_CLASS_KEYWORDS.search(searchable):
+    # --- 1. Co-occurrence: MRP candidate near the selling price ---
+    if current_price is not None:
+        for el in soup.find_all(True):
+            if not _is_mrp_candidate(el):
+                continue
             text = el.get_text(strip=True)
-            if text and any(c.isdigit() for c in text) and len(text) < 60:
-                p = _valid(_parse_price_text(text))
-                if p is not None:
-                    return p
-
-    # --- 3. Inline style: text-decoration containing line-through ---
-    for el in soup.find_all(style=re.compile(r"line-through", re.I)):
-        text = el.get_text(strip=True)
-        if text and any(c.isdigit() for c in text) and len(text) < 60:
+            if not text or not any(c.isdigit() for c in text) or len(text) > 80:
+                continue
             p = _valid(_parse_price_text(text))
-            if p is not None:
+            if p is None or p == current_price:
+                continue
+            if _container_has_price(el, current_price):
                 return p
 
-    # --- 4. Embedded JSON data ---
+    # --- 2. Structured data (reliable, not position-dependent) ---
+
     # Shopify: compare_at_price (stored in paise/cents)
     m = re.search(r'"compare_at_price"\s*:\s*"?(\d+(?:\.\d+)?)"?', html)
     if m:
@@ -688,7 +702,7 @@ def extract_original_price(html: str, product_url: str | None = None,
             if _valid(p) is not None:
                 return p
 
-    # --- 5. JSON-LD structured data ---
+    # JSON-LD: highPrice
     for script in soup.find_all("script", type="application/ld+json"):
         try:
             data = json.loads(script.string or "")
