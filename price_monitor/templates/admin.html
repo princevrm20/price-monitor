@@ -637,12 +637,18 @@ function showCheckResult(m){
       if(price<=budget){priceColor='var(--success)';priceLabel=' — Below budget!';}
       else{priceColor='var(--danger)';priceLabel=' — Above budget';}
     }
+    const mrp=m.original_price;
+    const mrpFmt=mrp!=null?'₹'+Number(mrp).toLocaleString():'N/A';
+    let discountPct=null;
+    if(price!=null&&mrp!=null&&mrp>price)discountPct=((mrp-price)/mrp*100).toFixed(1);
     html+='<div style="background:var(--bg);border-radius:8px;padding:1rem;text-align:center">';
     html+='<div style="font-size:.75rem;text-transform:uppercase;color:var(--muted);margin-bottom:.3rem">Current Price</div>';
     html+='<div style="font-size:1.8rem;font-weight:700;color:'+priceColor+'">'+priceFmt+'</div>';
+    if(discountPct)html+='<div style="font-size:.85rem;color:var(--success);margin-top:.3rem;font-weight:600">'+discountPct+'% off MRP</div>';
     if(priceLabel)html+='<div style="font-size:.82rem;color:'+priceColor+';margin-top:.2rem">'+priceLabel+'</div>';
     html+='</div>';
-    html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem">';
+    html+='<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:.5rem">';
+    html+='<div style="background:var(--bg);border-radius:6px;padding:.7rem"><div style="font-size:.7rem;text-transform:uppercase;color:var(--muted)">MRP</div><div style="font-size:1.1rem;font-weight:600">'+(mrp!=null?'<span style="text-decoration:line-through;color:var(--muted)">'+mrpFmt+'</span>':'N/A')+'</div></div>';
     html+='<div style="background:var(--bg);border-radius:6px;padding:.7rem"><div style="font-size:.7rem;text-transform:uppercase;color:var(--muted)">Your Budget</div><div style="font-size:1.1rem;font-weight:600">'+budgetFmt+'</div></div>';
     const peak=m.highest_price;
     const peakFmt=peak!=null?'₹'+Number(peak).toLocaleString():'N/A';

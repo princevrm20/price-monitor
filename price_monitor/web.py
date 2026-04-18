@@ -811,6 +811,7 @@ def _do_check_product(mon: dict) -> tuple[dict, dict]:
         add_event(mon["id"], "back_in_stock", {"price": price, "detected_name": detected_name})
 
     updates["last_price"] = price
+    details["original_price"] = original_price
     updates.update(_update_peak(mon, price, "highest_price"))
 
     reasons = _should_alert(mon, price, "price", "budget", original_price=original_price)
@@ -922,7 +923,7 @@ def check_single_monitor(monitor_id: str) -> dict:
         add_event(monitor_id, "check", details)
         _sse_broadcast({"type": "check", "monitor_id": monitor_id})
         _logger.info("CHECK OK    | %s | %s", name, json.dumps({k: v for k, v in details.items() if v is not None}, default=str)[:200])
-        return {**mon, **updates}
+        return {**mon, **updates, **{k: v for k, v in details.items() if v is not None}}
 
     except Exception as e:
         err_count = (mon.get("consecutive_errors") or 0) + 1
