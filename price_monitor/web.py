@@ -172,7 +172,7 @@ def login_page():
     error = None
     registered = request.args.get("registered") == "1"
     if request.method == "POST":
-        username = (request.form.get("username") or "").strip()
+        username = (request.form.get("username") or "").strip().lower()
         password = request.form.get("password", "")
         if not username or not password:
             error = "Username and password are required"
