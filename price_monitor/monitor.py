@@ -113,9 +113,22 @@ def _fetch_via_proxy(url: str, timeout: httpx.Timeout, verify: bool | str) -> st
             return raw.decode("latin-1", errors="replace")
 
 
-def _fetch_html_once(url: str, timeout: httpx.Timeout, verify: bool | str) -> str:
+_MOBILE_HEADERS = {
+    **DEFAULT_HEADERS,
+    "User-Agent": (
+        "Mozilla/5.0 (Linux; Android 14; Pixel 8) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Mobile Safari/537.36"
+    ),
+    "Sec-Ch-Ua-Mobile": "?1",
+    "Sec-Ch-Ua-Platform": '"Android"',
+}
+
+
+def _fetch_html_once(url: str, timeout: httpx.Timeout, verify: bool | str,
+                     headers: dict | None = None) -> str:
     with httpx.Client(
-        headers=DEFAULT_HEADERS,
+        headers=headers or DEFAULT_HEADERS,
         follow_redirects=True,
         timeout=timeout,
         verify=verify,
@@ -171,13 +184,23 @@ def fetch_html(url: str, timeout: httpx.Timeout | float | None = None) -> str:
             else:
                 raise
 
-    if _is_blocked_response(html) and not use_proxy:
+    if _is_blocked_response(html):
+        # Retry with mobile User-Agent (avoids CAPTCHA on many sites)
         try:
-            proxy_html = _fetch_via_proxy(url, t, verify if verify is not False else False)
-            if not _is_blocked_response(proxy_html):
-                return proxy_html
+            mobile_html = _fetch_html_once(url, t, False, headers=_MOBILE_HEADERS)
+            if not _is_blocked_response(mobile_html):
+                return mobile_html
         except Exception:
             pass
+
+        # Fall back to CORS proxy
+        if not use_proxy:
+            try:
+                proxy_html = _fetch_via_proxy(url, t, verify if verify is not False else False)
+                if not _is_blocked_response(proxy_html):
+                    return proxy_html
+            except Exception:
+                pass
 
     return html
 
