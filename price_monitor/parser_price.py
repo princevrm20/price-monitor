@@ -57,8 +57,14 @@ def _parse_number_token(s: str) -> float | None:
     last_comma = s.rfind(",")
     last_dot = s.rfind(".")
     if last_comma > last_dot:
-        # European style: 1.234,56
-        s2 = s.replace(".", "").replace(",", ".")
+        after_comma = s[last_comma + 1:]
+        digits_after = len(re.sub(r"\D", "", after_comma))
+        if digits_after == 3:
+            # Thousands separator (US/Indian): 4,399 or 1,00,000
+            s2 = s.replace(",", "")
+        else:
+            # European decimal: 1.234,56
+            s2 = s.replace(".", "").replace(",", ".")
     else:
         # US style: 1,234.56 or 1234.56
         s2 = s.replace(",", "")
@@ -594,11 +600,11 @@ def extract_original_price(html: str, product_url: str | None = None) -> float |
     """Extract the MRP / original / strikethrough price from a product page."""
     soup = _make_soup(html)
 
-    # Amazon: strikethrough / MRP price
+    # Amazon: strikethrough / MRP price (basisPrice is the main product's MRP)
     if _is_amazon_url(product_url):
-        for sel in [".a-text-strike", ".basisPrice .a-offscreen",
-                    ".a-price[data-a-strike=true] .a-offscreen",
-                    "[data-a-strike=true] .a-offscreen"]:
+        for sel in [".basisPrice .a-offscreen",
+                    "#corePrice_feature_div [data-a-strike=true] .a-offscreen",
+                    ".a-text-strike"]:
             node = soup.select_one(sel)
             if node:
                 text = node.get_text(strip=True)
