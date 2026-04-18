@@ -25,8 +25,10 @@ from price_monitor.db import (
     add_audit, add_event, count_users, create_monitor, create_user,
     create_delete_request, delete_monitor, delete_user, get_audit_log,
     get_delete_request, get_events, get_monitor, get_recent_events,
-    get_settings, get_user_by_username, list_delete_requests, list_monitors,
-    list_users, save_settings, update_delete_request, update_monitor,
+    get_settings, get_user_by_username, get_user_notify_config,
+    list_delete_requests, list_monitors,
+    list_users, save_settings, save_user_notify_config,
+    update_delete_request, update_monitor,
     update_user, verify_user,
 )
 
@@ -875,15 +877,20 @@ def _do_check_flight(mon: dict) -> tuple[dict, dict]:
 
 
 def _send_alert(mon: dict, title: str, message: str) -> None:
-    from price_monitor.notify_settings import load_notify_settings
+    from price_monitor.notify_settings import build_notify_settings
     from price_monitor.notifier import notify_price_alert
-    from price_monitor.db import _json_path
 
     message += "\n\nTo stop notifications for this product, turn off alerts on your dashboard."
 
     _logger.info("ALERT       | %s | %s", mon.get("name", "?"), title)
     try:
-        settings = load_notify_settings(_json_path("items.json"))
+        owner = mon.get("created_by", "")
+        user_cfg = get_user_notify_config(owner) if owner else {}
+        global_cfg = get_settings()
+        settings = build_notify_settings(user_cfg, global_cfg)
+        if not settings.any_remote():
+            _logger.info("ALERT SKIP  | %s | no notification channels configured for user=%s", mon.get("name", "?"), owner)
+            return
         notify_price_alert(settings, title=title, message=message)
     except Exception as e:
         _logger.error("ALERT FAIL  | %s | %s: %s", mon.get("name", "?"), title, str(e)[:200])
@@ -1009,24 +1016,45 @@ def api_comparison(group_name):
 # NOTIFICATION SETTINGS
 # ═══════════════════════════════════════════════════════════════════════
 
+_USER_NOTIFY_KEYS = {"ntfy_topic", "ntfy_server", "smtp_to"}
+_GLOBAL_SMTP_KEYS = {"smtp_host", "smtp_port", "smtp_user", "smtp_pass", "smtp_from"}
+
+
 @app.route("/api/notifications", methods=["GET"])
 @require_auth
 def api_get_notifications():
-    return jsonify(settings=get_settings())
+    username = session.get("username", "")
+    user_cfg = get_user_notify_config(username)
+    is_admin = session.get("role") == ROLE_ADMIN
+    if is_admin:
+        global_cfg = get_settings()
+        merged = {**user_cfg, **{k: v for k, v in global_cfg.items() if k in _GLOBAL_SMTP_KEYS}}
+        return jsonify(settings=merged)
+    return jsonify(settings=user_cfg)
 
 
 @app.route("/api/notifications", methods=["POST"])
 @require_auth
 def api_save_notifications():
     data = request.get_json(force=True)
-    save_settings(data)
+    username = session.get("username", "")
 
-    from price_monitor.notify_settings import write_notify_config_file
-    from price_monitor.db import _json_path
-    write_notify_config_file(_json_path("items.json"), data)
+    user_cfg = {k: v for k, v in data.items() if k in _USER_NOTIFY_KEYS}
+    save_user_notify_config(username, user_cfg)
 
-    add_audit("update", "settings", "notify", "notification settings", session.get("username", "system"))
-    _add_log("Notification settings saved")
+    if session.get("role") == ROLE_ADMIN:
+        global_cfg = {k: v for k, v in data.items() if k in _GLOBAL_SMTP_KEYS}
+        if global_cfg:
+            existing = get_settings()
+            existing.update(global_cfg)
+            save_settings(existing)
+
+            from price_monitor.notify_settings import write_notify_config_file
+            from price_monitor.db import _json_path
+            write_notify_config_file(_json_path("items.json"), existing)
+
+    add_audit("update", "settings", "notify", "notification settings", username)
+    _add_log(f"Notification settings saved by {username}")
     return jsonify(ok=True)
 
 
@@ -1034,9 +1062,12 @@ def api_save_notifications():
 @require_auth
 def api_test_notification():
     data = request.get_json(force=True)
-    from price_monitor.notify_settings import notify_settings_from_stored_dict
+    from price_monitor.notify_settings import build_notify_settings
     from price_monitor.notifier import notify_price_alert
-    s = notify_settings_from_stored_dict(data)
+    user_cfg = {k: v for k, v in data.items() if k in _USER_NOTIFY_KEYS}
+    global_cfg = get_settings()
+    global_cfg.update({k: v for k, v in data.items() if k in _GLOBAL_SMTP_KEYS})
+    s = build_notify_settings(user_cfg, global_cfg)
     if not s.desktop and not s.any_remote():
         return jsonify(ok=False, error="Configure at least one channel first"), 400
     ok = notify_price_alert(s, title="Price Monitor Test", message="If you received this, notifications work.")

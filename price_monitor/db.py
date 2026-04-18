@@ -494,3 +494,28 @@ def save_settings(config: dict) -> None:
 
     with _file_lock("settings.json"):
         _write_json("settings.json", [config])
+
+
+def get_user_notify_config(username: str) -> dict:
+    user = get_user_by_username(username)
+    if not user:
+        return {}
+    return user.get("notify_config") or {}
+
+
+def save_user_notify_config(username: str, config: dict) -> None:
+    user = get_user_by_username(username)
+    if not user:
+        return
+    sb = _get_supabase()
+    if sb:
+        sb.table("users").update({"notify_config": config}).eq("id", user["id"]).execute()
+        return
+
+    with _file_lock("users.json"):
+        all_u = _read_json("users.json")
+        for u in all_u:
+            if u["id"] == user["id"]:
+                u["notify_config"] = config
+                _write_json("users.json", all_u)
+                return

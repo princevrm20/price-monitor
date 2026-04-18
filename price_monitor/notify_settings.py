@@ -101,6 +101,29 @@ def notify_settings_from_stored_dict(data: dict[str, Any]) -> NotifySettings:
     )
 
 
+def build_notify_settings(user_config: dict[str, Any], global_config: dict[str, Any]) -> NotifySettings:
+    """Merge per-user destination fields with global SMTP server config."""
+    def _s(d: dict, key: str) -> str | None:
+        return str(d.get(key) or "").strip() or None
+
+    return NotifySettings(
+        ntfy_topic=_s(user_config, "ntfy_topic"),
+        ntfy_server=(str(user_config.get("ntfy_server") or "").strip().rstrip("/") or "https://ntfy.sh"),
+        telegram_bot_token=_s(user_config, "telegram_bot_token"),
+        telegram_chat_id=_s(user_config, "telegram_chat_id"),
+        callmebot_phone=_s(user_config, "callmebot_phone"),
+        callmebot_apikey=_s(user_config, "callmebot_apikey"),
+        webhook_url=_s(user_config, "webhook_url"),
+        desktop=False,
+        smtp_host=_s(global_config, "smtp_host"),
+        smtp_port=int(global_config.get("smtp_port") or 587),
+        smtp_user=_s(global_config, "smtp_user"),
+        smtp_pass=_s(global_config, "smtp_pass"),
+        smtp_from=_s(global_config, "smtp_from"),
+        smtp_to=_s(user_config, "smtp_to"),
+    )
+
+
 def load_notify_settings(items_path: Path | None = None) -> NotifySettings:
     from price_monitor.storage import default_data_path
 
