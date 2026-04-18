@@ -165,16 +165,8 @@ def list_monitors(
 def update_monitor(monitor_id: str, updates: dict) -> dict | None:
     sb = _get_supabase()
     if sb:
-        try:
-            resp = sb.table("monitors").update(updates).eq("id", monitor_id).execute()
-            return resp.data[0] if resp.data else None
-        except Exception as e:
-            if "PGRST204" in str(e) and updates:
-                safe = {k: v for k, v in updates.items() if k not in ("original_price",)}
-                if safe:
-                    resp = sb.table("monitors").update(safe).eq("id", monitor_id).execute()
-                    return resp.data[0] if resp.data else None
-            raise
+        resp = sb.table("monitors").update(updates).eq("id", monitor_id).execute()
+        return resp.data[0] if resp.data else None
 
     with _file_lock("monitors.json"):
         all_m = _read_json("monitors.json")

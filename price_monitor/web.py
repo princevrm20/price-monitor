@@ -670,7 +670,8 @@ def api_import_monitors():
 # CHECK (per-monitor) with alert modes, health tracking
 # ═══════════════════════════════════════════════════════════════════════
 
-def _should_alert(mon: dict, current_value: float | None, value_key: str, budget_key: str) -> dict:
+def _should_alert(mon: dict, current_value: float | None, value_key: str,
+                  budget_key: str, original_price: float | None = None) -> dict:
     """Return dict of triggered alert reasons. Empty dict = no alert.
 
     Both budget and drop_percent are checked independently.
@@ -696,8 +697,8 @@ def _should_alert(mon: dict, current_value: float | None, value_key: str, budget
 
     drop_pct = mon.get("alert_drop_percent")
     if drop_pct:
-        ref_price = mon.get("original_price")
-        if not ref_price or ref_price <= 0:
+        ref_price = original_price if original_price and original_price > 0 else None
+        if not ref_price:
             peak_key = "highest_price" if value_key == "price" else ("highest_fare" if value_key == "fare" else "highest_price")
             ref_price = mon.get(peak_key)
         if ref_price and ref_price > 0:
@@ -810,17 +811,15 @@ def _do_check_product(mon: dict) -> tuple[dict, dict]:
         add_event(mon["id"], "back_in_stock", {"price": price, "detected_name": detected_name})
 
     updates["last_price"] = price
-    if original_price is not None:
-        updates["original_price"] = original_price
     updates.update(_update_peak(mon, price, "highest_price"))
 
-    reasons = _should_alert(mon, price, "price", "budget")
+    reasons = _should_alert(mon, price, "price", "budget", original_price=original_price)
     if reasons:
         parts = []
         if "budget" in reasons:
             parts.append(f"Below budget! Now {price:g} (budget {mon['budget']:g})")
         if "drop_percent" in reasons:
-            ref = mon.get("original_price") or mon.get("highest_price") or price
+            ref = original_price or mon.get("highest_price") or price
             parts.append(f"Dropped {reasons['drop_percent']:.1f}% from MRP {ref:g}")
         if "any_change" in reasons:
             old = mon.get("last_price")
@@ -869,7 +868,7 @@ def _do_check_flight(mon: dict) -> tuple[dict, dict]:
         if "budget" in reasons and max_p:
             parts.append(f"Below max price! Fare {price:g} (max {max_p:g})")
         if "drop_percent" in reasons:
-            ref = mon.get("original_price") or mon.get("highest_price") or price
+            ref = mon.get("highest_price") or price
             parts.append(f"Dropped {reasons['drop_percent']:.1f}% from {ref:g}")
         if "any_change" in reasons:
             parts.append(f"Fare changed to {price:g}")
