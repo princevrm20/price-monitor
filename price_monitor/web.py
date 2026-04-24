@@ -674,7 +674,8 @@ def _should_alert(mon: dict, current_value: float | None, value_key: str,
                   budget_key: str, original_price: float | None = None) -> dict:
     """Return dict of triggered alert reasons. Empty dict = no alert.
 
-    Both budget and drop_percent are checked independently.
+    Deduplication: budget alert only fires once while price stays below budget.
+    drop_percent alert only fires once per new low (price must go up and drop again).
     Keys in result: 'budget' (bool), 'drop_percent' (float actual %), 'any_change' (bool).
     """
     if current_value is None:
@@ -693,7 +694,9 @@ def _should_alert(mon: dict, current_value: float | None, value_key: str,
 
     budget = mon.get(budget_key)
     if budget is not None and current_value <= budget:
-        reasons["budget"] = True
+        already_notified = mon.get("notified_budget", False)
+        if not already_notified:
+            reasons["budget"] = True
 
     drop_pct = mon.get("alert_drop_percent")
     if drop_pct:
@@ -703,8 +706,10 @@ def _should_alert(mon: dict, current_value: float | None, value_key: str,
             ref_price = mon.get(peak_key)
         if ref_price and ref_price > 0:
             actual_drop = ((ref_price - current_value) / ref_price) * 100
+            last_notified_price = mon.get("notified_drop_price")
             if actual_drop >= drop_pct:
-                reasons["drop_percent"] = actual_drop
+                if last_notified_price is None or current_value < last_notified_price:
+                    reasons["drop_percent"] = actual_drop
 
     if mode == "any_change" and not reasons:
         reasons["any_change"] = True
@@ -814,14 +819,26 @@ def _do_check_product(mon: dict) -> tuple[dict, dict]:
     details["original_price"] = original_price
     updates.update(_update_peak(mon, price, "highest_price"))
 
+    # Reset notified_budget when price goes back above budget
+    budget = mon.get("budget")
+    if budget is not None and price > budget and mon.get("notified_budget"):
+        updates["notified_budget"] = False
+
+    # Reset notified_drop_price when price rises (user can get a new alert on next drop)
+    last_notified_drop = mon.get("notified_drop_price")
+    if last_notified_drop is not None and price > last_notified_drop:
+        updates["notified_drop_price"] = None
+
     reasons = _should_alert(mon, price, "price", "budget", original_price=original_price)
     if reasons:
         parts = []
         if "budget" in reasons:
             parts.append(f"Below budget! Now {price:g} (budget {mon['budget']:g})")
+            updates["notified_budget"] = True
         if "drop_percent" in reasons:
             ref = original_price or mon.get("highest_price") or price
             parts.append(f"Dropped {reasons['drop_percent']:.1f}% from MRP {ref:g}")
+            updates["notified_drop_price"] = price
         if "any_change" in reasons:
             old = mon.get("last_price")
             direction = "dropped" if old and price < old else "changed"
@@ -830,6 +847,12 @@ def _do_check_product(mon: dict) -> tuple[dict, dict]:
         body = " | ".join(parts) + f"\nNow: {price:g}\n{mon['url']}"
         _send_alert(mon, title, body)
         details["alerted"] = True
+        add_event(mon["id"], "notification_sent", {
+            "price": price,
+            "original_price": original_price,
+            "reasons": {k: v for k, v in reasons.items()},
+            "message": " | ".join(parts),
+        })
 
     return updates, details
 
@@ -861,22 +884,35 @@ def _do_check_flight(mon: dict) -> tuple[dict, dict]:
 
     updates.update(_update_peak(mon, price, "highest_price"))
 
+    max_p = mon.get("flight_max_price")
+    if max_p is not None and price is not None and price > max_p and mon.get("notified_budget"):
+        updates["notified_budget"] = False
+    last_notified_drop = mon.get("notified_drop_price")
+    if last_notified_drop is not None and price is not None and price > last_notified_drop:
+        updates["notified_drop_price"] = None
+
     reasons = _should_alert(mon, price, "flight_price", "flight_max_price")
     if reasons:
         route = f"{mon['flight_origin']} -> {mon['flight_destination']} on {mon['flight_date']}"
         parts = []
-        max_p = mon.get("flight_max_price")
         if "budget" in reasons and max_p:
             parts.append(f"Below max price! Fare {price:g} (max {max_p:g})")
+            updates["notified_budget"] = True
         if "drop_percent" in reasons:
             ref = mon.get("highest_price") or price
             parts.append(f"Dropped {reasons['drop_percent']:.1f}% from {ref:g}")
+            updates["notified_drop_price"] = price
         if "any_change" in reasons:
             parts.append(f"Fare changed to {price:g}")
         title = f"Flight alert: {mon['name']}"
         body = " | ".join(parts) + f"\n{route}"
         _send_alert(mon, title, body)
         details["alerted"] = True
+        add_event(mon["id"], "notification_sent", {
+            "price": price,
+            "reasons": {k: v for k, v in reasons.items()},
+            "message": " | ".join(parts),
+        })
 
     return updates, details
 
