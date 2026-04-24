@@ -256,18 +256,19 @@ def _is_amazon_url(url: str | None) -> bool:
 
 def _amazon_selector_fallbacks() -> list[str]:
     return [
-        ".a-price.aok-align-center .a-offscreen",
         "#corePrice_feature_div .a-price .a-offscreen",
         "#corePriceDisplay_desktop_feature_div .a-price .a-offscreen",
         ".reinventPricePriceToPayMargin .a-offscreen",
-        "#ppd .a-price .a-offscreen",
         ".a-price.priceToPay .a-price-whole",
         ".priceToPay .a-price-whole",
         ".reinventPricePriceToPayMargin .a-price-whole",
         "#apex_desktop .a-price .a-offscreen",
-        "span.a-price.a-text-price .a-offscreen",
         "#corePrice_desktop .a-price .a-offscreen",
         "#buybox .a-price .a-offscreen",
+        # Scoped to #ppd to avoid matching prices from recommendation/ad sections
+        "#ppd .a-price.aok-align-center .a-offscreen",
+        "#ppd span.a-price.a-text-price .a-offscreen",
+        "#ppd .a-price .a-offscreen",
     ]
 
 
@@ -296,6 +297,19 @@ def _amazon_regex_price_from_html(html: str) -> float | None:
                 return float(w)
             except ValueError:
                 continue
+
+    # Twister / OLP fallback for "See All Buying Options" pages
+    prices: list[float] = []
+    for m in re.finditer(r'"priceWithoutCurrencySymbol"\s*:\s*"(\d+(?:\.\d+)?)"', html):
+        try:
+            p = float(m.group(1))
+            if p >= 1:
+                prices.append(p)
+        except ValueError:
+            pass
+    if prices:
+        return min(prices)
+
     return None
 
 
