@@ -2,11 +2,15 @@
 
 Uses Supabase (PostgreSQL) when SUPABASE_URL + SUPABASE_KEY are set,
 otherwise falls back to local JSON files for development.
+
+If Supabase is configured but unreachable, every function automatically
+falls back to JSON files after the first failure (per process lifetime).
 """
 from __future__ import annotations
 
 import json
 import os
+import sys
 import threading
 import uuid
 from datetime import datetime, timezone
@@ -14,21 +18,47 @@ from pathlib import Path
 from typing import Any
 
 _supabase_client = None
+_supabase_broken = False
 _json_locks: dict[str, threading.Lock] = {}
 _json_locks_lock = threading.Lock()
 
 
 def _get_supabase():
-    global _supabase_client
+    global _supabase_client, _supabase_broken
+    if _supabase_broken:
+        return None
     if _supabase_client is not None:
         return _supabase_client
     url = os.environ.get("SUPABASE_URL", "").strip()
     key = os.environ.get("SUPABASE_KEY", "").strip()
     if not url or not key:
         return None
-    from supabase import create_client
-    _supabase_client = create_client(url, key)
-    return _supabase_client
+    try:
+        from supabase import create_client
+        _supabase_client = create_client(url, key)
+        return _supabase_client
+    except Exception as exc:
+        print(f"[db] Supabase init failed, using JSON files: {exc}", file=sys.stderr)
+        _supabase_broken = True
+        return None
+
+
+def _sb(fn):
+    """Run a Supabase lambda; on any error mark Supabase broken and return _MISS sentinel."""
+    global _supabase_broken
+    try:
+        return fn()
+    except Exception as exc:
+        print(f"[db] Supabase query failed, falling back to JSON: {exc}", file=sys.stderr)
+        _supabase_broken = True
+        return _MISS
+
+
+class _MissSentinel:
+    """Returned by _sb() on failure so callers can distinguish None (valid) from 'not available'."""
+    __bool__ = lambda self: False  # noqa: E731
+
+_MISS = _MissSentinel()
 
 
 def use_supabase() -> bool:
@@ -97,8 +127,9 @@ def create_monitor(mon: dict) -> dict:
 
     sb = _get_supabase()
     if sb:
-        resp = sb.table("monitors").insert(mon).execute()
-        return resp.data[0]
+        r = _sb(lambda: sb.table("monitors").insert(mon).execute())
+        if r is not _MISS:
+            return r.data[0]
 
     with _file_lock("monitors.json"):
         all_m = _read_json("monitors.json")
@@ -110,8 +141,9 @@ def create_monitor(mon: dict) -> dict:
 def get_monitor(monitor_id: str) -> dict | None:
     sb = _get_supabase()
     if sb:
-        resp = sb.table("monitors").select("*").eq("id", monitor_id).execute()
-        return resp.data[0] if resp.data else None
+        r = _sb(lambda: sb.table("monitors").select("*").eq("id", monitor_id).execute())
+        if r is not _MISS:
+            return r.data[0] if r.data else None
 
     for m in _read_json("monitors.json"):
         if m["id"] == monitor_id:
@@ -130,20 +162,24 @@ def list_monitors(
 ) -> list[dict]:
     sb = _get_supabase()
     if sb:
-        q = sb.table("monitors").select("*").order("created_at", desc=True)
-        if status:
-            q = q.eq("status", status)
-        if monitor_type:
-            q = q.eq("type", monitor_type)
-        if category:
-            q = q.eq("category", category)
-        if tag:
-            q = q.contains("tags", [tag])
-        if comparison_group:
-            q = q.eq("comparison_group", comparison_group)
-        if created_by:
-            q = q.eq("created_by", created_by)
-        return q.execute().data
+        def _q():
+            q = sb.table("monitors").select("*").order("created_at", desc=True)
+            if status:
+                q = q.eq("status", status)
+            if monitor_type:
+                q = q.eq("type", monitor_type)
+            if category:
+                q = q.eq("category", category)
+            if tag:
+                q = q.contains("tags", [tag])
+            if comparison_group:
+                q = q.eq("comparison_group", comparison_group)
+            if created_by:
+                q = q.eq("created_by", created_by)
+            return q.execute()
+        r = _sb(_q)
+        if r is not _MISS:
+            return r.data
 
     all_m = _read_json("monitors.json")
     if status:
@@ -165,8 +201,9 @@ def list_monitors(
 def update_monitor(monitor_id: str, updates: dict) -> dict | None:
     sb = _get_supabase()
     if sb:
-        resp = sb.table("monitors").update(updates).eq("id", monitor_id).execute()
-        return resp.data[0] if resp.data else None
+        r = _sb(lambda: sb.table("monitors").update(updates).eq("id", monitor_id).execute())
+        if r is not _MISS:
+            return r.data[0] if r.data else None
 
     with _file_lock("monitors.json"):
         all_m = _read_json("monitors.json")
@@ -181,9 +218,13 @@ def update_monitor(monitor_id: str, updates: dict) -> dict | None:
 def delete_monitor(monitor_id: str) -> bool:
     sb = _get_supabase()
     if sb:
-        sb.table("monitors").delete().eq("id", monitor_id).execute()
-        sb.table("events").delete().eq("monitor_id", monitor_id).execute()
-        return True
+        def _d():
+            sb.table("monitors").delete().eq("id", monitor_id).execute()
+            sb.table("events").delete().eq("monitor_id", monitor_id).execute()
+            return True
+        r = _sb(_d)
+        if r is not _MISS:
+            return True
 
     with _file_lock("monitors.json"):
         all_m = _read_json("monitors.json")
@@ -213,8 +254,9 @@ def add_event(monitor_id: str, event_type: str, details: dict | None = None) -> 
     }
     sb = _get_supabase()
     if sb:
-        resp = sb.table("events").insert(ev).execute()
-        return resp.data[0]
+        r = _sb(lambda: sb.table("events").insert(ev).execute())
+        if r is not _MISS:
+            return r.data[0]
 
     with _file_lock("events.json"):
         all_e = _read_json("events.json")
@@ -233,10 +275,14 @@ def get_events(
 ) -> list[dict]:
     sb = _get_supabase()
     if sb:
-        q = sb.table("events").select("*").eq("monitor_id", monitor_id).order("created_at", desc=True).limit(limit)
-        if event_type:
-            q = q.eq("event_type", event_type)
-        return q.execute().data
+        def _q():
+            q = sb.table("events").select("*").eq("monitor_id", monitor_id).order("created_at", desc=True).limit(limit)
+            if event_type:
+                q = q.eq("event_type", event_type)
+            return q.execute()
+        r = _sb(_q)
+        if r is not _MISS:
+            return r.data
 
     all_e = _read_json("events.json")
     filtered = [e for e in all_e if e.get("monitor_id") == monitor_id]
@@ -249,7 +295,9 @@ def get_events(
 def get_recent_events(limit: int = 50) -> list[dict]:
     sb = _get_supabase()
     if sb:
-        return sb.table("events").select("*").order("created_at", desc=True).limit(limit).execute().data
+        r = _sb(lambda: sb.table("events").select("*").order("created_at", desc=True).limit(limit).execute())
+        if r is not _MISS:
+            return r.data
 
     all_e = _read_json("events.json")
     all_e.sort(key=lambda e: e.get("created_at", ""), reverse=True)
@@ -275,8 +323,9 @@ def add_audit(action: str, target_type: str, target_id: str,
     }
     sb = _get_supabase()
     if sb:
-        resp = sb.table("audit_log").insert(entry).execute()
-        return resp.data[0]
+        r = _sb(lambda: sb.table("audit_log").insert(entry).execute())
+        if r is not _MISS:
+            return r.data[0]
 
     with _file_lock("audit_log.json"):
         all_a = _read_json("audit_log.json")
@@ -295,12 +344,16 @@ def get_audit_log(
 ) -> list[dict]:
     sb = _get_supabase()
     if sb:
-        q = sb.table("audit_log").select("*").order("created_at", desc=True).limit(limit)
-        if action:
-            q = q.eq("action", action)
-        if target_id:
-            q = q.eq("target_id", target_id)
-        return q.execute().data
+        def _q():
+            q = sb.table("audit_log").select("*").order("created_at", desc=True).limit(limit)
+            if action:
+                q = q.eq("action", action)
+            if target_id:
+                q = q.eq("target_id", target_id)
+            return q.execute()
+        r = _sb(_q)
+        if r is not _MISS:
+            return r.data
 
     all_a = _read_json("audit_log.json")
     if action:
@@ -324,8 +377,9 @@ def create_user(user: dict) -> dict:
 
     sb = _get_supabase()
     if sb:
-        resp = sb.table("users").insert(user).execute()
-        return resp.data[0]
+        r = _sb(lambda: sb.table("users").insert(user).execute())
+        if r is not _MISS:
+            return r.data[0]
 
     with _file_lock("users.json"):
         all_u = _read_json("users.json")
@@ -337,8 +391,9 @@ def create_user(user: dict) -> dict:
 def get_user_by_username(username: str) -> dict | None:
     sb = _get_supabase()
     if sb:
-        resp = sb.table("users").select("*").eq("username", username).execute()
-        return resp.data[0] if resp.data else None
+        r = _sb(lambda: sb.table("users").select("*").eq("username", username).execute())
+        if r is not _MISS:
+            return r.data[0] if r.data else None
 
     for u in _read_json("users.json"):
         if u.get("username", "").lower() == username.lower():
@@ -357,8 +412,9 @@ def verify_user(username: str, password: str) -> dict | None:
 def list_users() -> list[dict]:
     sb = _get_supabase()
     if sb:
-        resp = sb.table("users").select("id, username, role, created_at").order("created_at").execute()
-        return resp.data
+        r = _sb(lambda: sb.table("users").select("id, username, role, created_at").order("created_at").execute())
+        if r is not _MISS:
+            return r.data
 
     return [
         {k: u[k] for k in ("id", "username", "role", "created_at") if k in u}
@@ -369,16 +425,18 @@ def list_users() -> list[dict]:
 def count_users() -> int:
     sb = _get_supabase()
     if sb:
-        resp = sb.table("users").select("id", count="exact").execute()
-        return resp.count or 0
+        r = _sb(lambda: sb.table("users").select("id", count="exact").execute())
+        if r is not _MISS:
+            return r.count or 0
     return len(_read_json("users.json"))
 
 
 def update_user(user_id: str, updates: dict) -> dict | None:
     sb = _get_supabase()
     if sb:
-        resp = sb.table("users").update(updates).eq("id", user_id).execute()
-        return resp.data[0] if resp.data else None
+        r = _sb(lambda: sb.table("users").update(updates).eq("id", user_id).execute())
+        if r is not _MISS:
+            return r.data[0] if r.data else None
 
     with _file_lock("users.json"):
         all_u = _read_json("users.json")
@@ -393,8 +451,9 @@ def update_user(user_id: str, updates: dict) -> dict | None:
 def delete_user(user_id: str) -> bool:
     sb = _get_supabase()
     if sb:
-        sb.table("users").delete().eq("id", user_id).execute()
-        return True
+        r = _sb(lambda: sb.table("users").delete().eq("id", user_id).execute())
+        if r is not _MISS:
+            return True
 
     with _file_lock("users.json"):
         all_u = _read_json("users.json")
@@ -418,8 +477,9 @@ def create_delete_request(req: dict) -> dict:
 
     sb = _get_supabase()
     if sb:
-        resp = sb.table("delete_requests").insert(req).execute()
-        return resp.data[0]
+        r = _sb(lambda: sb.table("delete_requests").insert(req).execute())
+        if r is not _MISS:
+            return r.data[0]
 
     with _file_lock("delete_requests.json"):
         all_r = _read_json("delete_requests.json")
@@ -431,10 +491,14 @@ def create_delete_request(req: dict) -> dict:
 def list_delete_requests(*, status: str | None = None) -> list[dict]:
     sb = _get_supabase()
     if sb:
-        q = sb.table("delete_requests").select("*").order("created_at", desc=True)
-        if status:
-            q = q.eq("status", status)
-        return q.execute().data
+        def _q():
+            q = sb.table("delete_requests").select("*").order("created_at", desc=True)
+            if status:
+                q = q.eq("status", status)
+            return q.execute()
+        r = _sb(_q)
+        if r is not _MISS:
+            return r.data
 
     all_r = _read_json("delete_requests.json")
     if status:
@@ -445,8 +509,9 @@ def list_delete_requests(*, status: str | None = None) -> list[dict]:
 def get_delete_request(req_id: str) -> dict | None:
     sb = _get_supabase()
     if sb:
-        resp = sb.table("delete_requests").select("*").eq("id", req_id).execute()
-        return resp.data[0] if resp.data else None
+        r = _sb(lambda: sb.table("delete_requests").select("*").eq("id", req_id).execute())
+        if r is not _MISS:
+            return r.data[0] if r.data else None
 
     for r in _read_json("delete_requests.json"):
         if r["id"] == req_id:
@@ -457,8 +522,9 @@ def get_delete_request(req_id: str) -> dict | None:
 def update_delete_request(req_id: str, updates: dict) -> dict | None:
     sb = _get_supabase()
     if sb:
-        resp = sb.table("delete_requests").update(updates).eq("id", req_id).execute()
-        return resp.data[0] if resp.data else None
+        r = _sb(lambda: sb.table("delete_requests").update(updates).eq("id", req_id).execute())
+        if r is not _MISS:
+            return r.data[0] if r.data else None
 
     with _file_lock("delete_requests.json"):
         all_r = _read_json("delete_requests.json")
@@ -477,10 +543,11 @@ def update_delete_request(req_id: str, updates: dict) -> dict | None:
 def get_settings() -> dict:
     sb = _get_supabase()
     if sb:
-        resp = sb.table("settings").select("*").eq("id", "notify").execute()
-        if resp.data:
-            return resp.data[0].get("config", {})
-        return {}
+        r = _sb(lambda: sb.table("settings").select("*").eq("id", "notify").execute())
+        if r is not _MISS:
+            if r.data:
+                return r.data[0].get("config", {})
+            return {}
 
     data = _read_json("settings.json")
     return data[0] if data else {}
@@ -489,8 +556,9 @@ def get_settings() -> dict:
 def save_settings(config: dict) -> None:
     sb = _get_supabase()
     if sb:
-        sb.table("settings").upsert({"id": "notify", "config": config}).execute()
-        return
+        r = _sb(lambda: sb.table("settings").upsert({"id": "notify", "config": config}).execute())
+        if r is not _MISS:
+            return
 
     with _file_lock("settings.json"):
         _write_json("settings.json", [config])
@@ -509,8 +577,9 @@ def save_user_notify_config(username: str, config: dict) -> None:
         return
     sb = _get_supabase()
     if sb:
-        sb.table("users").update({"notify_config": config}).eq("id", user["id"]).execute()
-        return
+        r = _sb(lambda: sb.table("users").update({"notify_config": config}).eq("id", user["id"]).execute())
+        if r is not _MISS:
+            return
 
     with _file_lock("users.json"):
         all_u = _read_json("users.json")
